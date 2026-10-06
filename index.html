@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#1c1f26">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Aspire">
+  <title>Aspire Concierge</title>
+  <meta name="description" content="Demo prototype of a customer app with the Aspire travel concierge. Not an official Aspire Lifestyles app.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@300;400;600;700&family=Lato:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/chat.css?v=1">
+  <link rel="stylesheet" href="assets/app.css?v=1">
+</head>
+<body>
+  <div class="app" id="app">
+    <section class="screen welcome" id="welcome">
+      <div class="brand">
+        <img class="brand-mark" src="icons/icon-192.png" alt="">
+        <span class="brand-name">Aspire</span>
+      </div>
+      <h1>Your personal <b>travel concierge</b>, in your pocket.</h1>
+      <p class="lead">Plan, book and manage trips by chatting with the Aspire concierge. When plans change, we tell you first.</p>
+      <ul class="perks">
+        <li><span class="ico">&#9992;</span><span><b>Trips made for you</b>Ideas from your travel history, packages with flights, hotel and services.</span></li>
+        <li><span class="ico">&#128276;</span><span><b>Updates on your phone</b>Rebookings, delays and price drops arrive as they happen.</span></li>
+        <li><span class="ico">&#9733;</span><span><b>Your Aspire points</b>Earn on every trip and pay with points when you like.</span></li>
+      </ul>
+      <div class="spacer"></div>
+      <button class="btn btn-primary" id="start" type="button">Get started</button>
+      <button class="btn btn-ghost" id="welcome-install" type="button" hidden>Install the app</button>
+      <div class="install-hint" id="welcome-hint" hidden></div>
+      <p class="demo-note">Demo prototype. Not an official Aspire Lifestyles app.</p>
+    </section>
+
+    <section class="screen main" id="main" hidden>
+      <header class="topbar">
+        <img class="brand-mark" src="icons/icon-192.png" alt="">
+        <div class="topbar-title">
+          <b id="title">Aspire Concierge</b>
+          <span><i class="dot"></i><span id="status">Online</span></span>
+        </div>
+        <button class="icon-btn" id="menu-btn" type="button" aria-label="Chat options">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.9"/><circle cx="12" cy="12" r="1.9"/><circle cx="12" cy="19" r="1.9"/></svg>
+        </button>
+        <div class="menu" id="menu" role="menu" hidden>
+          <button type="button" id="ask-updates" role="menuitem">Any updates on my trip?</button>
+          <button type="button" id="new-chat" role="menuitem">Start a new conversation</button>
+        </div>
+      </header>
+
+      <main class="views">
+        <div class="view view-chat" id="view-chat"></div>
+
+        <div class="view" id="view-updates" hidden>
+          <div class="page">
+            <h2>Trip updates</h2>
+            <p class="sub">Everything your concierge did or needs from you, newest first.</p>
+            <div id="updates-list"></div>
+          </div>
+        </div>
+
+        <div class="view" id="view-account" hidden>
+          <div class="page">
+            <div class="profile" id="profile"></div>
+            <button class="btn btn-line" id="sign-out" type="button" hidden>Sign out</button>
+            <div class="card" id="install-card" style="margin-top:18px">
+              <h3>Install Aspire on your phone</h3>
+              <ol class="steps" id="install-steps"></ol>
+              <button class="btn btn-dark" id="install-btn" type="button" style="margin-top:12px" hidden>Install app</button>
+            </div>
+            <p class="fine">Aspire Concierge app <span id="version"></span><br>Demo prototype. Not an official Aspire Lifestyles app.</p>
+          </div>
+        </div>
+      </main>
+
+      <nav class="tabbar" role="tablist">
+        <button class="tab active" type="button" data-tab="chat" role="tab" aria-selected="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5c4.97 0 9 3.36 9 7.5s-4.03 7.5-9 7.5c-1.05 0-2.06-.15-3-.43L4.5 20l1.08-3.6C4.03 15.06 3 13.12 3 11c0-4.14 4.03-7.5 9-7.5z"/></svg>
+          Concierge
+        </button>
+        <button class="tab" type="button" data-tab="updates" role="tab" aria-selected="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+          Updates
+          <span class="badge" id="updates-badge" hidden></span>
+        </button>
+        <button class="tab" type="button" data-tab="account" role="tab" aria-selected="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.2-4.2 4.3-6.5 8-6.5s6.8 2.3 8 6.5"/></svg>
+          Account
+        </button>
+      </nav>
+    </section>
+  </div>
+  <script src="assets/chat.js?v=1" defer></script>
+  <script src="assets/app.js?v=1" defer></script>
+</body>
+</html>

@@ -1,0 +1,601 @@
+(function () {
+  'use strict';
+
+  var CONFIG = {
+    endpoint: 'https://orgfarm-e88355df2d-dev-ed.develop.my.site.com/aspireappvforcesite/services/apexrest/aspireApp/assist',
+    attemptTimeoutMs: 25000,
+    attempts: 2,
+    historyTurns: 12,
+    agentName: 'Aspire Travel Concierge',
+    welcome: 'Welcome to Aspire Concierge. I can plan and book trips tailored to you. To get started, what is your email address?',
+    slowNoticeMs: 8000,
+    verySlowNoticeMs: 30000,
+    storageKey: 'aspireApp.chat.v1',
+    keepForMs: 12 * 60 * 60 * 1000
+  };
+
+  var ICONS = {
+    agent: '<svg viewBox="0 0 30 30" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="10" r="5"/><path d="M3.5 25c.8-4.6 4.3-7.5 8.5-7.5 1.7 0 3.2.4 4.5 1.2"/><path d="M23 18v8M19 22h8"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+    send: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+    cloud: '<svg viewBox="0 0 44 30"><path fill="#00A1E0" d="M18.3 3.3A7.7 7.7 0 0 1 23.9 1a7.8 7.8 0 0 1 6.8 4 9.4 9.4 0 0 1 3.8-.8A9.5 9.5 0 0 1 44 13.7a9.5 9.5 0 0 1-11.3 9.3 6.9 6.9 0 0 1-9 2.8 7.9 7.9 0 0 1-14.6-.4 7.3 7.3 0 0 1-1.5.2A7.4 7.4 0 0 1 4 11.9a8.4 8.4 0 0 1 7.4-12.5 8.4 8.4 0 0 1 6.9 3.9z"/></svg>'
+  };
+
+  var SHOWN_CARDS = ['ideas', 'packages', 'review', 'notice', 'flightOptions', 'booking', 'hotelOptions', 'hotelBooking', 'extras', 'tripSummary'];
+
+  var AIRLINE_COLOURS = {
+    'Emirates': '#c8102e', 'British Airways': '#075aaa', 'Virgin Atlantic': '#8f0d3c',
+    'Qatar Airways': '#5c0632', 'Lufthansa': '#05164d', 'Singapore Airlines': '#f5a623'
+  };
+
+  var NOTICE_TITLES = {
+    'Rebooked': ['&#9992;', 'Flight rebooked for you'], 'Rebooking proposal': ['&#9888;', 'Your decision needed'],
+    'Hotel price drop': ['&#9660;', 'Price drop found'], 'Delay notice': ['&#9201;', 'Flight delayed'],
+    'Check-in reminder': ['&#10003;', 'Checked in'], 'Escalated': ['&#9742;', 'Concierge team on it']
+  };
+
+  var state = load();
+  var busy = false;
+  var slow = 0;
+  var slowTimer = null, verySlowTimer = null;
+  var els = {};
+  var listeners = {};
+
+  function freshState() {
+    return { started: false, items: [], trip: {}, joinedAt: null };
+  }
+
+  function load() {
+    try {
+      var saved = JSON.parse(localStorage.getItem(CONFIG.storageKey) || 'null');
+      if (saved && saved.state && Date.now() - saved.savedAt < CONFIG.keepForMs) return saved.state;
+    } catch (e) {
+      return freshState();
+    }
+    return freshState();
+  }
+
+  function save() {
+    try {
+      localStorage.setItem(CONFIG.storageKey, JSON.stringify({ savedAt: Date.now(), state: state }));
+    } catch (e) {
+      return;
+    }
+  }
+
+  function on(name, fn) {
+    (listeners[name] = listeners[name] || []).push(fn);
+  }
+
+  function emit(name, payload) {
+    (listeners[name] || []).forEach(function (fn) {
+      try { fn(payload); } catch (e) { console.error(e); }
+    });
+  }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function richText(s) {
+    return esc(s)
+      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+      .replace(/\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g, '<a href="mailto:$1">$1</a>')
+      .replace(/\n/g, '<br>');
+  }
+  function timeLabel(ts) {
+    return new Date(ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  }
+  function money(v, cur) {
+    try {
+      return new Intl.NumberFormat('en-US', { style: 'currency', currency: cur || 'USD', maximumFractionDigits: 0 }).format(v || 0);
+    } catch (e) { return '$' + Math.round(v || 0); }
+  }
+  function num(v) { return new Intl.NumberFormat('en-US').format(v || 0); }
+
+  function build(container) {
+    var root = document.createElement('div');
+    root.className = 'acw acw-embedded';
+    root.innerHTML =
+      '<div class="acw-window" role="region" aria-label="' + esc(CONFIG.agentName) + ' chat">' +
+        '<div class="acw-body" aria-live="polite"></div>' +
+        '<div class="acw-composer">' +
+          '<div class="acw-input-wrap">' +
+            ICONS.plus.replace('<svg', '<svg class="acw-plus" aria-hidden="true"') +
+            '<textarea class="acw-input" rows="1" placeholder="Type your message..." aria-label="Type your message" enterkeyhint="send"></textarea>' +
+            '<button class="acw-send" type="button" aria-label="Send">' + ICONS.send + '</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="acw-footer">Powered by Agentforce from ' + ICONS.cloud + '<b>salesforce</b></div>' +
+      '</div>';
+    container.appendChild(root);
+
+    els.root = root;
+    els.body = root.querySelector('.acw-body');
+    els.input = root.querySelector('.acw-input');
+    els.send = root.querySelector('.acw-send');
+
+    els.input.addEventListener('input', function () {
+      els.input.style.height = 'auto';
+      els.input.style.height = Math.min(els.input.scrollHeight, 120) + 'px';
+      els.send.classList.toggle('show', els.input.value.trim().length > 0);
+    });
+    els.input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+    });
+    els.send.addEventListener('click', submit);
+    els.body.addEventListener('click', function (e) {
+      if (busy) return;
+      var idea = e.target.closest('.acw-idea-pick');
+      if (idea) { send('Let\'s plan ' + idea.getAttribute('data-title')); return; }
+      var pkg = e.target.closest('.acw-pkg-pick');
+      if (pkg) { send('I\'ll take package ' + pkg.getAttribute('data-pkg')); return; }
+      if (e.target.closest('.acw-rv-book')) { send('Book everything'); return; }
+      if (e.target.closest('.acw-rv-change')) { els.input.placeholder = 'Tell me what to change'; els.input.focus(); return; }
+      var btn = e.target.closest('.acw-select');
+      if (btn) { send('Option ' + btn.getAttribute('data-rank')); return; }
+      var pick = e.target.closest('.acw-ex-pick');
+      if (pick) {
+        pick.classList.toggle('on');
+        pick.textContent = pick.classList.contains('on') ? '✓ Added' : 'Add';
+        var card = pick.closest('.acw-ex');
+        var n = card.querySelectorAll('.acw-ex-pick.on').length;
+        card.querySelectorAll('.acw-ex-book').forEach(function (b) { b.disabled = n === 0; });
+        return;
+      }
+      var book = e.target.closest('.acw-ex-book');
+      if (book) {
+        var ranks = [].map.call(book.closest('.acw-ex').querySelectorAll('.acw-ex-pick.on'), function (b) { return b.getAttribute('data-rank'); });
+        if (!ranks.length) return;
+        var list = ranks.length === 1 ? 'option ' + ranks[0] : 'options ' + ranks.slice(0, -1).join(', ') + ' and ' + ranks[ranks.length - 1];
+        send('I would like ' + list + (book.getAttribute('data-points') === '1' ? ', using my points' : ', paying by card'));
+        return;
+      }
+      if (e.target.closest('.acw-ex-skip')) send('No thanks');
+    });
+  }
+
+  function start() {
+    if (state.started) return;
+    state.started = true;
+    state.joinedAt = Date.now();
+    state.items.push({ kind: 'agent', texts: [CONFIG.welcome], cards: [], ts: Date.now() });
+    save();
+  }
+
+  function reset() {
+    busy = false;
+    slow = 0;
+    clearTimeout(slowTimer);
+    clearTimeout(verySlowTimer);
+    state = freshState();
+    start();
+    render();
+    emit('identity', identity());
+  }
+
+  function identity() {
+    var t = state.trip || {};
+    return t.customerSessionId ? { firstName: t.firstName || '', isNewCustomer: t.isNewCustomer === true } : null;
+  }
+
+  function push(item) {
+    state.items.push(item);
+    save();
+    render();
+  }
+
+  function submit() {
+    var text = els.input.value.trim();
+    if (!text || busy) return;
+    els.input.value = '';
+    els.input.style.height = 'auto';
+    els.send.classList.remove('show');
+    send(text);
+  }
+
+  function send(text) {
+    push({ kind: 'user', text: text, ts: Date.now() });
+    busy = true;
+    slow = 0;
+    clearTimeout(slowTimer);
+    clearTimeout(verySlowTimer);
+    slowTimer = setTimeout(function () { if (busy) { slow = 1; render(); } }, CONFIG.slowNoticeMs);
+    verySlowTimer = setTimeout(function () { if (busy) { slow = 2; render(); } }, CONFIG.verySlowNoticeMs);
+    render();
+    emit('busy', true);
+
+    var history = [];
+    state.items.forEach(function (it) {
+      if (it.kind === 'user') history.push({ role: 'customer', text: it.text });
+      else if (it.kind === 'agent') (it.texts || []).forEach(function (t) { history.push({ role: 'agent', text: t }); });
+    });
+    history.pop();
+    var body = JSON.stringify({
+      message: text,
+      history: history.slice(-CONFIG.historyTurns),
+      state: state.trip || {}
+    });
+    var sentFor = state;
+    var before = JSON.stringify(identity());
+
+    function attempt(n) {
+      var ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+      var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, CONFIG.attemptTimeoutMs) : null;
+      return fetch(CONFIG.endpoint, {
+        method: 'POST',
+        mode: 'cors',
+        credentials: 'omit',
+        cache: 'no-store',
+        referrerPolicy: 'no-referrer',
+        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        body: body,
+        signal: ctrl ? ctrl.signal : undefined
+      })
+        .then(function (r) {
+          clearTimeout(timer);
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        }, function (err) {
+          clearTimeout(timer);
+          throw err;
+        })
+        .catch(function (err) {
+          console.warn('Concierge request attempt ' + n + ' failed (' + (err && (err.name + ': ' + err.message)) + ')');
+          if (n < CONFIG.attempts) return attempt(n + 1);
+          throw err;
+        });
+    }
+
+    attempt(1)
+      .then(function (res) {
+        if (sentFor !== state) return;
+        if (res.state) state.trip = res.state;
+        var now = Date.now();
+        var cards = (res.cards || []).filter(function (c) { return SHOWN_CARDS.indexOf(c.type) !== -1; });
+        var texts = (res.replies || []).filter(function (t) { return t && String(t).trim(); });
+        if (texts.length || cards.length) {
+          state.items.push({ kind: 'agent', texts: texts, cards: cards, ts: now });
+          cards.forEach(function (c) {
+            if (c.type === 'notice') emit('notice', { kind: (c.data || {}).kind, status: (c.data || {}).status, summary: (c.data || {}).summary, ts: now });
+          });
+          emit('reply', { texts: texts, cards: cards });
+        } else {
+          state.items.push({ kind: 'error', texts: [res.error ? 'Sorry, something went wrong. Please try again.' : 'Sorry, I did not catch that. Could you try again?'], ts: now });
+          if (res.error) console.error('Concierge error:', res.error);
+        }
+      })
+      .catch(function (err) {
+        console.error('Concierge request failed:', err);
+        if (sentFor !== state) return;
+        state.items.push({ kind: 'error', texts: ['I could not reach the concierge just now. Please check your connection and try again.'], ts: Date.now() });
+      })
+      .then(function () {
+        if (sentFor !== state) return;
+        clearTimeout(slowTimer);
+        clearTimeout(verySlowTimer);
+        slow = 0;
+        busy = false;
+        save();
+        render();
+        emit('busy', false);
+        var after = JSON.stringify(identity());
+        if (after !== before) emit('identity', identity());
+      });
+  }
+
+  function render() {
+    if (!els.body) return;
+    var html = '';
+    if (state.started) {
+      html += '<div class="acw-system">' + esc(CONFIG.agentName) + ' joined<br>' + esc(timeLabel(state.joinedAt || Date.now())) + '</div>';
+    }
+    var lastFlightIdx = -1, bookedAfter = false, lastHotelIdx = -1, lastExtrasIdx = -1, lastPackagesIdx = -1, lastReviewIdx = -1, lastIdeasIdx = -1;
+    state.items.forEach(function (it, i) {
+      (it.cards || []).forEach(function (c) {
+        if (c.type === 'ideas') lastIdeasIdx = i;
+        if (c.type === 'packages') { lastPackagesIdx = i; lastReviewIdx = -1; }
+        if (c.type === 'review') lastReviewIdx = i;
+        if (c.type === 'flightOptions') { lastFlightIdx = i; bookedAfter = false; lastHotelIdx = -1; lastExtrasIdx = -1; }
+        if (c.type === 'booking' && lastFlightIdx !== -1) bookedAfter = true;
+        if (c.type === 'hotelOptions') lastHotelIdx = i;
+        if (c.type === 'hotelBooking') lastHotelIdx = -1;
+        if (c.type === 'extras') { lastHotelIdx = -1; lastExtrasIdx = i; }
+        if (c.type === 'tripSummary') { lastHotelIdx = -1; lastExtrasIdx = -1; }
+      });
+    });
+    var stage = (state.trip && state.trip.stage) || '';
+    if (stage !== 'HOTELS') lastHotelIdx = -1;
+    if (stage !== 'EXTRAS') lastExtrasIdx = -1;
+    if (stage !== 'PACKAGES' && stage !== 'REVIEW') lastPackagesIdx = -1;
+    if (stage !== 'REVIEW') lastReviewIdx = -1;
+    if (!(state.trip && state.trip.ideas && state.trip.ideas.length)) lastIdeasIdx = -1;
+
+    state.items.forEach(function (it, i) {
+      if (it.kind === 'user') {
+        html += '<div class="acw-row acw-user"><div class="acw-col"><div class="acw-bubble">' + richText(it.text) + '</div>' +
+          '<div class="acw-meta">Sent · ' + esc(timeLabel(it.ts)) + '</div></div></div>';
+        return;
+      }
+      var cards = it.cards || [];
+      html += '<div class="acw-row acw-agent' + (it.kind === 'error' ? ' acw-error' : '') + (cards.length ? ' acw-has-card' : '') + '">' +
+        '<div class="acw-avatar">' + ICONS.agent + '</div><div class="acw-col">';
+      (it.texts || []).forEach(function (t) { html += '<div class="acw-bubble">' + richText(t) + '</div>'; });
+      cards.forEach(function (c) {
+        var interactive = (c.type === 'ideas' && i === lastIdeasIdx) || (c.type === 'packages' && i === lastPackagesIdx) || (c.type === 'review' && i === lastReviewIdx) ||
+          (c.type === 'flightOptions' && i === lastFlightIdx && !bookedAfter) ||
+          (c.type === 'hotelOptions' && i === lastHotelIdx) || (c.type === 'extras' && i === lastExtrasIdx);
+        html += '<div class="acw-card-inline">' + renderCard(c, interactive) + '</div>';
+      });
+      html += '<div class="acw-meta">' + esc(CONFIG.agentName) + ' · ' + esc(timeLabel(it.ts)) + '</div></div></div>';
+    });
+    if (busy) {
+      html += '<div class="acw-row acw-agent acw-typing"><div class="acw-avatar">' + ICONS.agent + '</div>' +
+        '<div class="acw-col"><div class="acw-bubble" aria-label="Agent is typing"><span></span><span></span><span></span></div>' +
+        (slow === 1 ? '<div class="acw-meta">Still working on it…</div>' : '') +
+        (slow === 2 ? '<div class="acw-meta">Taking longer than usual. Please stay with me…</div>' : '') + '</div></div>';
+    }
+    els.body.innerHTML = html;
+    els.send.disabled = busy;
+    var rows = els.body.querySelectorAll('.acw-row');
+    var last = rows[rows.length - 1];
+    if (!busy && last && last.classList.contains('acw-has-card')) {
+      els.body.scrollTop = Math.max(0, last.offsetTop - 12);
+    } else {
+      els.body.scrollTop = els.body.scrollHeight;
+    }
+  }
+
+  function renderCard(card, interactive) {
+    var d = card.data || {};
+    if (card.type === 'ideas') return ideasCard(d, interactive);
+    if (card.type === 'packages') return packagesCard(d, interactive);
+    if (card.type === 'review') return reviewCard(d, interactive);
+    if (card.type === 'notice') return noticeCard(d);
+    if (card.type === 'flightOptions') return flightCard(d, interactive);
+    if (card.type === 'booking') return bookingCard(d);
+    if (card.type === 'hotelOptions') return hotelCard(d, interactive);
+    if (card.type === 'hotelBooking') return hotelBookingCard(d);
+    if (card.type === 'extras') return extrasCard(d, interactive);
+    if (card.type === 'tripSummary') return summaryCard(d);
+    return '';
+  }
+
+  function flightCard(d, interactive) {
+    var opts = d.options || [];
+    var personal = d.personalised !== false;
+    var h = '<div class="acw-card acw-fo"><div class="acw-card-head">' +
+      '<div class="acw-fo-route">' + esc(d.route) + '</div>' +
+      '<div class="acw-fo-meta">' + esc(d.travelDates) + ' · ' + esc(d.passengers) + '</div>' +
+      '<div class="acw-fo-sub">' + (personal ? 'Ranked for you' : 'Sorted by stops and fare') + '</div></div>';
+    opts.forEach(function (o) {
+      var stopsText = o.stops === 0 ? 'Non-stop' : o.stops + ' stop' + (o.stops > 1 ? 's' : '');
+      h += '<div class="acw-opt' + (o.recommended ? ' acw-opt-best' : '') + '">' +
+        (o.recommended ? '<div class="acw-ribbon">&#9733; ' + (personal ? 'Best match for you' : 'Top pick') + '</div>' : '') +
+        '<div class="acw-opt-top"><div class="acw-rank">' + esc(o.rank) + '</div>' +
+        '<div class="acw-logo" style="background:' + (AIRLINE_COLOURS[o.airline] || '#4a4a4a') + '">' + esc(String(o.flightNumber || '').slice(0, 2)) + '</div>' +
+        '<div class="acw-airline"><b>' + esc(o.airline) + '</b><span>' + esc(o.flightNumber) + ' · ' + esc(o.cabin) + '</span></div>' +
+        '<div class="acw-price"><b>' + money(o.totalPrice, d.currencyCode) + '</b><span>' + money(o.pricePerAdult, d.currencyCode) + ' / adult</span></div></div>' +
+        '<div class="acw-times"><div class="acw-t"><b>' + esc(o.departTime) + '</b><span>' + esc(o.origin) + '</span></div>' +
+        '<div class="acw-line">' + esc(o.duration) + '<div class="acw-bar">&#9992;</div>' +
+        '<div class="acw-stops' + (o.stops === 0 ? ' acw-stops-direct' : '') + '">' + esc(stopsText) + '</div></div>' +
+        '<div class="acw-t acw-t-right"><b>' + esc(o.arriveTime) + '</b><span>' + esc(o.destination) + '</span></div></div>' +
+        '<div class="acw-score"><div class="acw-score-row">' + (personal ? '<b>' + esc(o.matchScore) + '% match</b>' : '<span></span>') +
+        (o.seatsLeft != null && o.seatsLeft <= 5 ? '<span class="acw-seats">Only ' + esc(o.seatsLeft) + ' seats left</span>' : '') + '</div>' +
+        (personal ? '<div class="acw-track"><div class="acw-fill" style="width:' + Math.max(0, Math.min(100, o.matchScore || 0)) + '%"></div></div>' : '') +
+        '<div class="acw-reason">' + esc(o.reason) + '</div></div>' +
+        (interactive ? '<button type="button" class="acw-select" data-rank="' + esc(o.rank) + '">Select this flight</button>' : '') +
+        '</div>';
+    });
+    h += '<div class="acw-fo-foot">' + (interactive ? 'Select a flight, or reply with 1, 2 or 3' : 'Options presented') + '</div></div>';
+    return h;
+  }
+
+  function bookingCard(b) {
+    var parts = String(b.route || '').split('→');
+    return '<div class="acw-card"><div class="acw-bk-head"><div class="acw-check">&#10003;</div><div>' +
+      '<div class="acw-bk-status">Booking ' + esc(b.status) + '</div>' +
+      '<div class="acw-bk-reflabel">Booking reference</div><div class="acw-bk-ref">' + esc(b.bookingReference) + '</div></div></div>' +
+      '<div class="acw-pass"><div class="acw-pass-airline">' + esc(b.airline) + ' · ' + esc(b.flightNumber) + '</div>' +
+      '<div class="acw-pass-route"><div class="acw-pass-end"><b>' + esc((parts[0] || '').trim()) + '</b><span>' + esc(b.departTime) + '</span></div>' +
+      '<div class="acw-pass-plane">&#9992;</div>' +
+      '<div class="acw-pass-end acw-pass-end-right"><b>' + esc((parts[1] || '').trim()) + '</b><span>' + esc(b.arriveTime) + '</span></div></div>' +
+      '<div class="acw-grid"><div><small>Date</small><b>' + esc(b.departDate) + '</b></div><div><small>Cabin</small><b>' + esc(b.cabin) + '</b></div>' +
+      '<div><small>Passengers</small><b>' + esc(b.passengers) + '</b></div><div><small>Total paid</small><b>' + money(b.totalPrice, b.currencyCode) + '</b></div></div></div>' +
+      '<div class="acw-tear"></div>' +
+      '<div class="acw-pts"><b>+' + num(b.pointsEarned) + '</b><div><b>' + esc(b.loyaltyTier) + ' points earned</b><span>New balance: ' + num(b.newPointsBalance) + ' points</span></div></div>' +
+      '<div class="acw-next">' + esc(b.nextStep) + '</div></div>';
+  }
+
+  function stars(n) { n = Math.max(0, Math.min(5, n || 0)); return n ? '<span class="acw-stars">' + new Array(n + 1).join('&#9733;') + '</span>' : ''; }
+
+  function hotelCard(d, interactive) {
+    var opts = d.options || [];
+    var personal = d.personalised !== false;
+    var h = '<div class="acw-card acw-fo"><div class="acw-card-head acw-ht-head">' +
+      '<div class="acw-fo-route">' + esc(d.city) + ' stays</div>' +
+      '<div class="acw-fo-meta">' + esc(d.stayDates) + ' · ' + esc(d.guests) + '</div>' +
+      '<div class="acw-fo-sub">' + (d.sortedBy ? 'Hotels ' + esc(d.sortedBy) : (personal ? 'Picked for you' : 'Sorted by rating and location')) + '</div></div>';
+    opts.forEach(function (o) {
+      h += '<div class="acw-opt' + (o.recommended ? ' acw-opt-best' : '') + '">' +
+        (o.recommended ? '<div class="acw-ribbon">&#9733; ' + (personal ? 'Best match for you' : 'Top pick') + '</div>' : '') +
+        '<div class="acw-opt-top"><div class="acw-rank">' + esc(o.rank) + '</div>' +
+        '<div class="acw-airline"><b>' + esc(o.name) + '</b><span>' + stars(o.stars) + ' · ' + esc(o.area) +
+        (o.distanceKm != null ? ' · ' + esc(o.distanceKm) + ' km from centre' : '') + '</span></div>' +
+        '<div class="acw-price"><b>' + money(o.totalPrice) + '</b><span>' + money(o.pricePerNight) + ' / night</span></div></div>' +
+        '<div class="acw-ht-facts">' + esc(o.nights) + ' nights · ' + esc(o.rooms) + ' × ' + esc(o.roomType) +
+        (o.guestRating != null ? ' · <b>' + esc(o.guestRating) + '</b>/10 guests' : '') + '</div>' +
+        ((o.amenities || []).length ? '<div class="acw-ht-amen">' + o.amenities.slice(0, 4).map(function (a) { return '<span>' + esc(a) + '</span>'; }).join('') + '</div>' : '') +
+        (o.perk ? '<div class="acw-ht-perk">&#127873; ' + esc(o.perk) + '</div>' : '') +
+        '<div class="acw-score">' + (personal ? '<div class="acw-score-row"><b>' + esc(o.matchScore) + '% match</b></div>' +
+          '<div class="acw-track"><div class="acw-fill" style="width:' + Math.max(0, Math.min(100, o.matchScore || 0)) + '%"></div></div>' : '') +
+        '<div class="acw-reason">' + esc(o.reason) + '</div></div>' +
+        (interactive ? '<button type="button" class="acw-select" data-rank="' + esc(o.rank) + '">Select this hotel</button>' : '') +
+        '</div>';
+    });
+    h += '<div class="acw-fo-foot">' + (interactive ? 'Select a hotel, or tell me if you would rather skip it' : 'Hotels presented') + '</div></div>';
+    return h;
+  }
+
+  function hotelBookingCard(b) {
+    return '<div class="acw-card"><div class="acw-bk-head"><div class="acw-check">&#10003;</div><div>' +
+      '<div class="acw-bk-status">Hotel confirmed</div>' +
+      '<div class="acw-bk-reflabel">Booking reference</div><div class="acw-bk-ref">' + esc(b.bookingReference) + '</div></div></div>' +
+      '<div class="acw-pass"><div class="acw-pass-airline">' + esc(b.hotelName) + ' ' + stars(b.stars) + '</div>' +
+      '<div class="acw-ht-area">' + esc(b.area) + '</div>' +
+      '<div class="acw-grid"><div><small>Check-in</small><b>' + esc(b.checkIn) + '</b></div><div><small>Check-out</small><b>' + esc(b.checkOut) + '</b></div>' +
+      '<div><small>Room</small><b>' + esc(b.rooms) + ' × ' + esc(b.roomType) + '</b></div><div><small>Total paid</small><b>' + money(b.totalPrice) + '</b></div></div>' +
+      (b.perk ? '<div class="acw-ht-perk">&#127873; ' + esc(b.perk) + '</div>' : '') + '</div>' +
+      '<div class="acw-tear"></div>' +
+      '<div class="acw-pts"><b>+' + num(b.pointsEarned) + '</b><div><b>' + esc(b.loyaltyTier) + ' points earned</b><span>New balance: ' + num(b.newPointsBalance) + ' points</span></div></div></div>';
+  }
+
+  function extrasCard(d, interactive) {
+    var opts = d.options || [];
+    var balance = d.pointsBalance || 0;
+    var canRedeem = opts.some(function (o) { return o.pointsPrice <= balance; });
+    var h = '<div class="acw-card acw-fo acw-ex"><div class="acw-card-head acw-ex-head">' +
+      '<div class="acw-fo-route">Make the most of ' + esc(d.city) + '</div>' +
+      '<div class="acw-fo-meta">Aspire Lifestyles services for your stay at ' + esc(d.hotelName) + '</div>' +
+      (canRedeem ? '<div class="acw-fo-sub">Your balance: ' + num(balance) + ' points</div>' : '<div class="acw-fo-sub">Earn Aspire points on every service</div>') + '</div>';
+    opts.forEach(function (o) {
+      h += '<div class="acw-opt acw-ex-opt"><div class="acw-opt-top"><div class="acw-rank">' + esc(o.rank) + '</div>' +
+        '<div class="acw-airline"><b>' + esc(o.name) + '</b><span>' + esc(o.category) + (o.serviceDate ? ' · ' + esc(o.serviceDate) : '') +
+        (o.familyFriendly ? ' · Family friendly' : '') + '</span></div>' +
+        '<div class="acw-price"><b>' + money(o.price) + '</b>' + (o.pointsPrice <= balance ? '<span>or ' + num(o.pointsPrice) + ' pts</span>' : '') + '</div></div>' +
+        '<div class="acw-reason">' + esc(o.description) + '</div>' +
+        (interactive ? '<button type="button" class="acw-ex-pick" data-rank="' + esc(o.rank) + '">Add</button>' : '') + '</div>';
+    });
+    if (interactive) {
+      h += '<div class="acw-ex-actions"><button type="button" class="acw-ex-book" disabled>Book selected</button>' +
+        (canRedeem ? '<button type="button" class="acw-ex-book acw-ex-alt" data-points="1" disabled>Use my points</button>' : '') +
+        '<button type="button" class="acw-ex-skip">No thanks</button></div>';
+    }
+    h += '<div class="acw-fo-foot">' + (interactive ? 'Add what you like, or just tell me' : 'Services presented') + '</div></div>';
+    return h;
+  }
+
+  function legLine(l, label) {
+    if (!l) return '';
+    var stopsText = l.stops === 0 ? 'non-stop' : l.stops + ' stop' + (l.stops > 1 ? 's' : '');
+    return '<div class="acw-pk-line"><span class="acw-pk-ico">&#9992;</span><div><b>' + esc(label) + ' · ' + esc(l.airline) + ' ' + esc(l.flightNumber) + '</b>' +
+      '<span>' + esc(l.departDate) + ' · ' + esc(l.departTime) + ' ' + esc(l.fromCode) + ' → ' + esc(l.arriveTime) + ' ' + esc(l.toCode) + ' · ' + esc(stopsText) +
+      (l.seats ? ' · seats ' + esc(l.seats) : '') + '</span></div></div>';
+  }
+
+  function hotelLine(v) {
+    if (!v.hotelName) return '';
+    return '<div class="acw-pk-line"><span class="acw-pk-ico">&#127976;</span><div><b>' + esc(v.hotelName) + ' ' + stars(v.hotelStars) + '</b>' +
+      '<span>' + esc(v.nights) + ' nights · ' + esc(v.rooms) + ' × ' + esc(v.roomType) + (v.hotelArea ? ' · ' + esc(v.hotelArea) : '') + '</span>' +
+      (v.hotelPerk ? '<span class="acw-pk-perk">&#127873; ' + esc(v.hotelPerk) + '</span>' : '') + '</div></div>';
+  }
+
+  function serviceLines(v) {
+    return (v.services || []).map(function (s) {
+      return '<div class="acw-pk-line"><span class="acw-pk-ico">&#10022;</span><div><b>' + esc(s.name) + '</b><span>' +
+        (s.withPoints ? num(s.pointsPrice) + ' Aspire points' : money(s.price)) + '</span></div></div>';
+    }).join('');
+  }
+
+  function ideasCard(d, interactive) {
+    var personal = d.personalised !== false && (d.ideas || []).some(function (x) { return x.tag !== 'Popular this season'; });
+    var h = '<div class="acw-card acw-fo acw-ideas"><div class="acw-card-head">' +
+      '<div class="acw-fo-route">' + (personal ? 'Picked for you' + (d.firstName ? ', ' + esc(d.firstName) : '') : 'Popular this season') + '</div>' +
+      '<div class="acw-fo-sub">' + (personal ? 'Trip ideas from your travels' : 'Loved by Aspire members') + '</div></div>';
+    (d.ideas || []).forEach(function (x, n) {
+      var top = personal && n === 0;
+      h += '<div class="acw-opt' + (top ? ' acw-opt-best' : '') + '">' +
+        (top ? '<div class="acw-ribbon">&#9733; Top pick for you</div>' : '') +
+        '<span class="acw-idea-tag">' + esc(x.tag) + '</span>' +
+        '<div class="acw-idea-title">' + esc(x.title) + '</div>' +
+        '<div class="acw-idea-dates">' + esc(x.dates) + '</div>' +
+        '<div class="acw-reason">' + esc(x.reason) + '</div>' +
+        (interactive ? '<button type="button" class="acw-select acw-idea-pick" data-title="' + esc(x.title) + '">Plan this trip</button>' : '') +
+        '</div>';
+    });
+    h += '<div class="acw-fo-foot">' + (interactive ? 'Choose a trip, or tell me where you would like to go' : 'Trip ideas presented') + '</div></div>';
+    return h;
+  }
+
+  function packagesCard(d, interactive) {
+    var personal = d.personalised !== false;
+    var h = '<div class="acw-card acw-fo acw-pk"><div class="acw-card-head">' +
+      '<div class="acw-fo-route">Your ' + esc(d.city) + ' trip</div>' +
+      '<div class="acw-fo-meta">' + esc(d.travelDates) + ' · ' + esc(d.travellers) + '</div>' +
+      '<div class="acw-fo-sub">Complete packages: flights, hotel and services</div></div>';
+    (d.packages || []).forEach(function (v) {
+      h += '<div class="acw-opt' + (v.recommended ? ' acw-opt-best' : '') + '">' +
+        (v.recommended ? '<div class="acw-ribbon">&#9733; ' + (personal ? 'Recommended for you' : 'Top pick') + '</div>' : '') +
+        '<div class="acw-opt-top"><div class="acw-rank">' + esc(v.packageNo) + '</div>' +
+        '<div class="acw-airline"><b>' + esc(v.label) + '</b><span>' + esc(v.reason || '') + '</span></div>' +
+        '<div class="acw-price"><b>' + money(v.cardTotal) + '</b><span>' + (v.pointsUsed ? '+ ' + num(v.pointsUsed) + ' pts' : 'total') + '</span></div></div>' +
+        '<div class="acw-pk-body">' + legLine(v.outbound, 'Out') + legLine(v.inbound, 'Back') + hotelLine(v) + serviceLines(v) + '</div>' +
+        '<div class="acw-pk-earn">Earn ' + num(v.pointsEarned) + ' Aspire points</div>' +
+        (interactive ? '<button type="button" class="acw-select acw-pkg-pick" data-pkg="' + esc(v.packageNo) + '">Choose this package</button>' : '') +
+        '</div>';
+    });
+    h += '<div class="acw-fo-foot">' + (interactive ? 'Choose a package, or tell me what to change' : 'Packages presented') + '</div></div>';
+    return h;
+  }
+
+  function reviewCard(d, interactive) {
+    var v = d.view || {};
+    var hotel = v.hotelTotal || 0;
+    var services = v.servicesCardTotal || 0;
+    var h = '<div class="acw-card acw-rv"><div class="acw-bk-head acw-sum-head"><div class="acw-check">&#9998;</div><div>' +
+      '<div class="acw-bk-status">Review your trip</div>' +
+      '<div class="acw-fo-meta">' + esc(v.travelDates) + ' · ' + esc(v.travellers) + '</div></div></div>' +
+      '<div class="acw-pk-body acw-rv-body">' + legLine(v.outbound, 'Out') + legLine(v.inbound, 'Back') + hotelLine(v) + serviceLines(v) + '</div>' +
+      '<div class="acw-rv-prices">' +
+      (v.flightsTotal ? '<div><span>Flights</span><b>' + money(v.flightsTotal) + '</b></div>' : '') +
+      (hotel ? '<div><span>Hotel</span><b>' + money(hotel) + '</b></div>' : '') +
+      (services ? '<div><span>Services</span><b>' + money(services) + '</b></div>' : '') +
+      (v.pointsUsed ? '<div><span>Aspire points used</span><b>' + num(v.pointsUsed) + '</b></div>' : '') +
+      '<div class="acw-rv-total"><span>Pay with ' + esc(v.paymentCard) + '</span><b>' + money(v.cardTotal) + '</b></div></div>' +
+      '<div class="acw-tear"></div>' +
+      '<div class="acw-pts"><b>+' + num(v.pointsEarned) + '</b><div><b>Aspire points you will earn</b><span>Balance today: ' + num(v.pointsBalance) + ' points</span></div></div>';
+    if (interactive) {
+      h += '<div class="acw-ex-actions"><button type="button" class="acw-ex-book acw-rv-book">Book everything</button>' +
+        '<button type="button" class="acw-ex-skip acw-rv-change">Change something</button></div>';
+    }
+    return h + '</div>';
+  }
+
+  function noticeCard(d) {
+    var t = NOTICE_TITLES[d.kind] || ['&#9733;', 'Trip update'];
+    return '<div class="acw-card acw-notice"><div class="acw-notice-ico">' + t[0] + '</div><div><b>' + t[1] + '</b><span>' + esc(d.summary) + '</span></div></div>';
+  }
+
+  function summaryCard(t) {
+    function list(label, items) {
+      return (items || []).length ? '<div class="acw-sum-sec"><small>' + label + '</small>' + items.map(function (x) { return '<div>' + esc(x) + '</div>'; }).join('') + '</div>' : '';
+    }
+    return '<div class="acw-card"><div class="acw-bk-head acw-sum-head"><div class="acw-check">&#9992;</div><div>' +
+      '<div class="acw-bk-status">Your ' + esc(t.destination) + ' trip is set</div>' +
+      '<div class="acw-fo-meta">' + esc(t.travelDates) + '</div></div></div>' +
+      '<div class="acw-pass">' + list('Flights', t.flights) + list('Stay', t.hotels) + list('Experiences', t.extras) +
+      '<div class="acw-grid"><div><small>Points earned</small><b>+' + num(t.pointsEarnedThisTrip) + '</b></div>' +
+      '<div><small>Points used</small><b>' + num(t.pointsRedeemedThisTrip) + '</b></div></div></div>' +
+      '<div class="acw-tear"></div>' +
+      '<div class="acw-pts"><b>' + num(t.pointsBalance) + '</b><div><b>' + esc(t.loyaltyTier) + ' balance</b><span>' + esc(t.nextReward) + '</span></div></div></div>';
+  }
+
+  function mount(container) {
+    build(container);
+    start();
+    render();
+  }
+
+  window.AspireChat = {
+    mount: mount,
+    on: on,
+    reset: reset,
+    identity: identity,
+    isBusy: function () { return busy; },
+    send: function (text) { if (text && !busy && els.body) send(String(text)); },
+    focus: function () { if (els.input) els.input.focus(); },
+    refresh: function () { render(); },
+    noticeTitle: function (kind) { return (NOTICE_TITLES[kind] || ['', 'Trip update'])[1]; }
+  };
+})();
