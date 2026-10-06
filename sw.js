@@ -1,4 +1,4 @@
-var CACHE = 'aspire-app-v3';
+var CACHE = 'aspire-app-v4';
 var SHELL = [
   './',
   'index.html',
@@ -76,6 +76,7 @@ self.addEventListener('push', function (event) {
     }).then(function () {
       return self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     }).then(function (list) {
+      if (!p.kind || p.kind === 'Test') return;
       list.forEach(function (c) { c.postMessage({ type: 'push', notice: { kind: p.kind, summary: p.summary, status: p.status, ts: Date.now() } }); });
     })
   );

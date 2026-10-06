@@ -17,8 +17,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@300;400;600;700&family=Lato:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/chat.css?v=3">
-  <link rel="stylesheet" href="assets/app.css?v=3">
+  <link rel="stylesheet" href="assets/chat.css?v=4">
+  <link rel="stylesheet" href="assets/app.css?v=4">
 </head>
 <body>
   <div class="app" id="app">
@@ -65,6 +65,11 @@
           <div class="page">
             <h2>Trip updates</h2>
             <p class="sub">Everything your concierge did or needs from you, newest first.</p>
+            <div class="card notify" id="notify-card">
+              <h3 id="notify-title">Get trip updates on this phone</h3>
+              <p id="notify-text"></p>
+              <button class="btn btn-primary" id="notify-btn" type="button" hidden></button>
+            </div>
             <div id="updates-list"></div>
           </div>
         </div>
@@ -102,7 +107,9 @@
       </nav>
     </section>
   </div>
-  <script src="assets/chat.js?v=3" defer></script>
-  <script src="assets/app.js?v=3" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/12.4.0/firebase-app-compat.js" defer></script>
+  <script src="https://www.gstatic.com/firebasejs/12.4.0/firebase-messaging-compat.js" defer></script>
+  <script src="assets/chat.js?v=4" defer></script>
+  <script src="assets/app.js?v=4" defer></script>
 </body>
 </html>

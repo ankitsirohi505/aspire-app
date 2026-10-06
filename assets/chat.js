@@ -634,6 +634,7 @@
     reset: reset,
     clear: clear,
     identity: identity,
+    sessionId: function () { return (state.trip && state.trip.customerSessionId) || ''; },
     isBusy: function () { return busy; },
     send: function (text) { if (text && !busy && els.body) send(String(text)); },
     focus: function () { if (els.input) els.input.focus(); },

@@ -196,3 +196,7 @@ button { font-family: inherit; }
 .stat small { display: block; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .stat b { display: block; font-size: 16px; margin-top: 2px; }
 #sign-in { margin-bottom: 10px; }
+.notify { background: #fffaf0; border-color: #f3dfa6; }
+.notify.is-on { background: #f1faf4; border-color: #bfe3cb; }
+.notify h3 { font-size: 15px; }
+.notify .btn { padding: 12px 16px; font-size: 15px; }

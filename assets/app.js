@@ -1,8 +1,8 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.1.0';
-  var KEYS = { started: 'aspireApp.started.v1', updates: 'aspireApp.updates.v1', me: 'aspireApp.me.v1' };
+  var VERSION = '1.2.0';
+  var KEYS = { started: 'aspireApp.started.v1', updates: 'aspireApp.updates.v1', me: 'aspireApp.me.v1', seen: 'aspireApp.updatesSeen.v1' };
   var AUTH = {
     site: 'https://orgfarm-e88355df2d-dev-ed.develop.my.site.com/aspireapp',
     api: 'https://orgfarm-e88355df2d-dev-ed.develop.my.site.com/aspireappvforcesite/services/apexrest',
@@ -10,6 +10,18 @@
     clientId: '3MVG9XgkMlifdwVCcjmh1PMTUBG3831HP23RbBiE65U5ZxXaLiHAHLoLmN3Mh2I51ggnZWCQUCiW3Up66VcCZ',
     key: 'aspireApp.auth.v1',
     stateKey: 'aspireApp.authState.v1'
+  };
+  var PUSH = {
+    config: {
+      apiKey: 'AIzaSyCZaxyBCREtC3gcgbY-ge3fJN0Ytf04LzY',
+      authDomain: 'aspire-app-demo.firebaseapp.com',
+      projectId: 'aspire-app-demo',
+      storageBucket: 'aspire-app-demo.firebasestorage.app',
+      messagingSenderId: '462519727698',
+      appId: '1:462519727698:web:bb26d388543388c78ad18b'
+    },
+    vapidKey: 'BD4OagjYTOReDDeRGSoRfiJW5Z_rTFSS8KO6KhZcaTkUSftUcotasKxDA_umPd7Iq4nif5V5gWI2A13aoqlD5Gw',
+    key: 'aspireApp.push.v1'
   };
   var TAB_TITLES = { chat: 'Aspire Concierge', updates: 'Trip updates', account: 'Account' };
   var NOTICE_ICONS = {
@@ -116,6 +128,9 @@
   }
 
   function signOut() {
+    var pushed = read(PUSH.key, null);
+    if (pushed && pushed.token) registerDevice(pushed.token, false).catch(function () { return null; });
+    forget(PUSH.key);
     forget(AUTH.key);
     forget(KEYS.me);
     write(KEYS.updates, []);
@@ -154,6 +169,177 @@
       .catch(function (e) { console.warn('Profile not loaded', e); });
   }
 
+  function pushSupported() {
+    try {
+      return !!(window.firebase && window.firebase.messaging && window.firebase.messaging.isSupported() && 'Notification' in window && 'serviceWorker' in navigator);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function messaging() {
+    if (!window.firebase.apps.length) window.firebase.initializeApp(PUSH.config);
+    return window.firebase.messaging();
+  }
+
+  function platform() {
+    if (isIos()) return 'iPhone';
+    if (/android/i.test(navigator.userAgent)) return 'Android';
+    return 'Browser';
+  }
+
+  function canIdentify() {
+    return !!token() || !!(window.AspireChat && window.AspireChat.sessionId());
+  }
+
+  function pushState() {
+    var saved = read(PUSH.key, null);
+    if (isIos() && !isStandalone()) return 'install';
+    if (!pushSupported()) return 'unsupported';
+    if (Notification.permission === 'denied') return 'denied';
+    if (saved && saved.token && Notification.permission === 'granted') return 'on';
+    if (!canIdentify()) return 'signin';
+    return 'off';
+  }
+
+  function renderNotify() {
+    if (!els.notifyCard) return;
+    var s = pushState();
+    var t = {
+      install: ['Turn on notifications', 'On iPhone, add Aspire to your Home Screen first (Safari, Share, Add to Home Screen), then open it from there.', ''],
+      unsupported: ['Notifications', 'This browser cannot show notifications. Use Chrome on Android, or Aspire from your iPhone Home Screen.', ''],
+      denied: ['Notifications are blocked', 'Allow notifications for Aspire in your phone settings, then come back here.', ''],
+      on: ['Notifications are on', 'This phone gets a notification when your concierge changes or protects a booking.', 'Turn off'],
+      signin: ['Get trip updates on this phone', 'Sign in first, then turn on notifications.', 'Sign in'],
+      off: ['Get trip updates on this phone', 'Get a notification when your concierge rebooks a flight, finds a better price or checks you in.', 'Turn on notifications']
+    }[s];
+    els.notifyTitle.textContent = t[0];
+    els.notifyText.textContent = t[1];
+    els.notifyBtn.hidden = !t[2];
+    els.notifyBtn.textContent = t[2];
+    els.notifyBtn.className = 'btn ' + (s === 'on' ? 'btn-line' : 'btn-primary');
+    els.notifyCard.classList.toggle('is-on', s === 'on');
+  }
+
+  function notifyAction() {
+    var s = pushState();
+    if (s === 'signin') { signIn(); return; }
+    if (s === 'on') { disablePush(); return; }
+    if (s === 'off') enablePush();
+  }
+
+  function enablePush() {
+    if (pushState() !== 'off') { renderNotify(); return; }
+    els.notifyBtn.disabled = true;
+    Notification.requestPermission()
+      .then(function (p) {
+        if (p !== 'granted') throw new Error(p === 'denied' ? 'notifications were blocked' : 'notifications were not allowed');
+        return navigator.serviceWorker.ready;
+      })
+      .then(function (reg) { return messaging().getToken({ vapidKey: PUSH.vapidKey, serviceWorkerRegistration: reg }); })
+      .then(function (tok) {
+        if (!tok) throw new Error('no push token was issued');
+        return registerDevice(tok, true).then(function () { write(PUSH.key, { token: tok, ts: Date.now() }); });
+      })
+      .then(function () { toast('Notifications are on for this phone.'); })
+      .catch(function (e) { toast('Could not turn on notifications: ' + (e && e.message ? e.message : e)); })
+      .then(function () { els.notifyBtn.disabled = false; renderNotify(); });
+  }
+
+  function disablePush() {
+    var saved = read(PUSH.key, null);
+    forget(PUSH.key);
+    if (saved && saved.token) registerDevice(saved.token, false).catch(function () { return null; });
+    if (pushSupported()) messaging().deleteToken().catch(function () { return null; });
+    toast('Notifications are off for this phone.');
+    renderNotify();
+  }
+
+  function registerDevice(tok, active) {
+    var t = token();
+    var headers = { 'Content-Type': 'text/plain;charset=UTF-8' };
+    if (t) headers.Authorization = 'Bearer ' + t;
+    return fetch(AUTH.api + '/aspireApp/device', {
+      method: 'POST',
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
+      keepalive: !active,
+      headers: headers,
+      body: JSON.stringify({
+        token: tok,
+        active: active,
+        platform: platform(),
+        userAgent: navigator.userAgent.slice(0, 250),
+        sessionId: window.AspireChat ? window.AspireChat.sessionId() : ''
+      })
+    })
+      .then(function (r) {
+        if (r.status === 401) { sessionEnded(); throw new Error('please sign in again'); }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (res) {
+        if (!res || !res.ok) throw new Error((res && res.message) || 'the phone was not registered');
+        return res;
+      });
+  }
+
+  function refreshPush() {
+    var saved = read(PUSH.key, null);
+    if (!saved || !saved.token || !pushSupported() || Notification.permission !== 'granted' || !canIdentify()) return;
+    navigator.serviceWorker.ready
+      .then(function (reg) { return messaging().getToken({ vapidKey: PUSH.vapidKey, serviceWorkerRegistration: reg }); })
+      .then(function (tok) {
+        if (!tok || (tok === saved.token && Date.now() - saved.ts < 24 * 60 * 60 * 1000)) return null;
+        return registerDevice(tok, true).then(function () { write(PUSH.key, { token: tok, ts: Date.now() }); });
+      })
+      .catch(function (e) { console.warn('Push refresh failed', e); });
+  }
+
+  function offerPush() {
+    if (pushState() === 'off') toast('Turn on notifications to hear about changes to your trips.', 'Turn on', enablePush);
+    else if (pushState() === 'install') toast('To get notifications on iPhone, add Aspire to your Home Screen.');
+  }
+
+  function loadServerUpdates() {
+    var t = token();
+    if (!t) return;
+    fetch(AUTH.api + '/aspireApp/updates', {
+      method: 'GET',
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
+      headers: { Authorization: 'Bearer ' + t }
+    })
+      .then(function (r) {
+        if (r.status === 401) { sessionEnded(); return null; }
+        return r.ok ? r.json() : null;
+      })
+      .then(function (items) {
+        if (!items || !items.length) return;
+        var seen = read(KEYS.seen, Date.now() - 6 * 60 * 60 * 1000);
+        var list = updates();
+        var known = {};
+        list.forEach(function (u) { known[u.key] = true; });
+        var added = false;
+        items.forEach(function (i) {
+          var key = (i.kind || '') + '|' + (i.summary || '');
+          if (known[key]) return;
+          known[key] = true;
+          added = true;
+          list.push({ key: key, kind: i.kind, summary: i.summary, status: i.status, ts: i.ts || Date.now(), read: current === 'updates' || (i.ts || 0) <= seen });
+        });
+        if (!added) return;
+        list.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+        write(KEYS.updates, list.slice(0, 50));
+        renderUpdates();
+      })
+      .catch(function (e) { console.warn('Updates not loaded', e); });
+  }
+
   function showMain(tab) {
     els.welcome.hidden = true;
     els.main.hidden = false;
@@ -166,7 +352,12 @@
       window.AspireChat.on('busy', function (b) { els.status.textContent = b ? 'Typing…' : 'Online'; });
     }
     setTab(tab || 'chat');
-    if (token()) loadMe();
+    if (token()) {
+      loadMe();
+      loadServerUpdates();
+    }
+    refreshPush();
+    renderNotify();
   }
 
   function setTab(name) {
@@ -180,7 +371,11 @@
       t.setAttribute('aria-selected', t.getAttribute('data-tab') === name ? 'true' : 'false');
     });
     els.menuBtn.hidden = name !== 'chat';
-    if (name === 'updates') markRead();
+    if (name === 'updates') {
+      markRead();
+      renderNotify();
+      loadServerUpdates();
+    }
     if (name === 'account') renderAccount();
     if (name === 'chat' && window.AspireChat) window.AspireChat.refresh();
   }
@@ -198,6 +393,7 @@
   }
 
   function markRead() {
+    write(KEYS.seen, Date.now());
     var list = updates().map(function (u) { u.read = true; return u; });
     write(KEYS.updates, list);
     renderUpdates();
@@ -317,7 +513,10 @@
     navigator.serviceWorker.register('sw.js').catch(function (e) { console.warn('Service worker not registered', e); });
     navigator.serviceWorker.addEventListener('message', function (e) {
       var m = e.data || {};
-      if (m.type === 'push' && m.notice) addUpdate(m.notice);
+      if (m.type === 'push' && m.notice) {
+        addUpdate(m.notice);
+        loadServerUpdates();
+      }
       if (m.type === 'open') {
         showMain(m.tab === 'updates' ? 'updates' : 'chat');
         if (m.say && window.AspireChat && window.AspireChat.identity()) window.AspireChat.send(m.say);
@@ -347,6 +546,10 @@
     els.welcomeHint = $('welcome-hint');
     els.menuBtn = $('menu-btn');
     els.menu = $('menu');
+    els.notifyCard = $('notify-card');
+    els.notifyTitle = $('notify-title');
+    els.notifyText = $('notify-text');
+    els.notifyBtn = $('notify-btn');
     $('version').textContent = VERSION;
 
     if (window.AspireChat) window.AspireChat.configure({ token: token, onUnauthorized: sessionEnded });
@@ -377,15 +580,27 @@
       renderAccount();
       setTab('chat');
     });
+    els.notifyBtn.addEventListener('click', notifyAction);
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState !== 'visible') return;
+      loadServerUpdates();
+      refreshPush();
+      renderNotify();
+    });
     els.updatesList.addEventListener('click', function (e) {
       if (e.target.closest('[data-open-chat]')) setTab('chat');
     });
 
     setupInstall();
     renderUpdates();
+    renderNotify();
     registerWorker();
     var returned = consumeAuthReturn();
-    if (returned) { showMain('chat'); return; }
+    if (returned) {
+      showMain('chat');
+      setTimeout(offerPush, 2500);
+      return;
+    }
     if (handleLink()) return;
     if (token() || read(KEYS.started, false)) showMain('chat');
   }
