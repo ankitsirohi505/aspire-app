@@ -1,4 +1,4 @@
-var CACHE = 'aspire-app-v5';
+var CACHE = 'aspire-app-v6';
 var SHELL = [
   './',
   'index.html',
