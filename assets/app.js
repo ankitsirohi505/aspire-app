@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.1.0';
+  var VERSION = '2.1.1';
   var KEYS = {
     updates: 'aspireApp.updates.v1',
     seen: 'aspireApp.updatesSeen.v1',
@@ -362,7 +362,7 @@
       headers: headers,
       body: opts && opts.body
     }).then(function (r) {
-      if (r.status === 401 && t) { sessionEnded(); throw new Error('please sign in again'); }
+      if (r.status === 401 && t && !(opts && opts.quiet)) { sessionEnded(); throw new Error('please sign in again'); }
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     });
@@ -1103,7 +1103,7 @@
 
     if (window.AspireRecovery) {
       window.AspireRecovery.configure({
-        api: api,
+        api: function (path, opts) { return api(path, Object.assign({ quiet: true }, opts)); },
         icons: ICONS,
         onClose: function () { setTab('home'); loadRecoveries(); },
         onChange: function (r) {
