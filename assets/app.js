@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.1.6';
+  var VERSION = '2.1.7';
   var KEYS = {
     updates: 'aspireApp.updates.v1',
     seen: 'aspireApp.updatesSeen.v1',
@@ -305,7 +305,7 @@
     location.assign(AUTH.site + '/services/oauth2/authorize?response_type=token' +
       '&client_id=' + encodeURIComponent(AUTH.clientId) +
       '&redirect_uri=' + encodeURIComponent(appUrl()) +
-      '&scope=api' +
+      '&scope=' + encodeURIComponent('api id') +
       '&state=' + n);
   }
 
