@@ -638,6 +638,23 @@
     isBusy: function () { return busy; },
     send: function (text) { if (text && !busy && els.body) send(String(text)); },
     focus: function () { if (els.input) els.input.focus(); },
+    isMounted: function () { return !!els.body; },
+    prefill: function (text) {
+      if (!els.input) return;
+      els.input.value = text || '';
+      els.input.dispatchEvent(new Event('input'));
+      els.input.focus();
+      var end = els.input.value.length;
+      try { els.input.setSelectionRange(end, end); } catch (e) { return; }
+    },
+    sendWhenReady: function (text) {
+      var tries = 0;
+      (function attempt() {
+        if (!els.body) return;
+        if (!busy && (identity() || !currentToken())) { send(String(text)); return; }
+        if (++tries < 60) setTimeout(attempt, 500);
+      })();
+    },
     refresh: function () { render(); },
     noticeTitle: function (kind) { return (NOTICE_TITLES[kind] || ['', 'Trip update'])[1]; }
   };
