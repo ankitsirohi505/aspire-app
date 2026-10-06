@@ -30,7 +30,7 @@ The Salesforce side lives in `aspire-app-salesforce` (SFDX project). Its `websit
 ## How it works
 
 - `index.html` is the app shell with three tabs: Concierge, Updates and Account.
-- **Sign in** opens the branded login page of the `Aspire App` Experience Cloud site (OAuth user-agent flow), then returns to the app with a token. The chat opens already signed in ("Welcome back, Emily"), and the Account tab shows the customer's tier, points and home airport. **Sign out** ends the site session too.
+- **Sign in** opens the branded login page of the `Aspire App` Experience Cloud site (OAuth user-agent flow), then returns to the app with a token. The chat opens already signed in ("Welcome back, Emily") with four choices: **Plan a trip** (trip ideas from their travels), **Search flights** (flights for their top trip idea, ranked by how they fly), **Search hotels** (hotels for that trip from their past stays and preferences) and **Concierge services** (extras for their next booked trip). Each choice opens the usual bookable card. The Account tab shows the customer's tier, points and home airport. **Sign out** ends the site session too.
   - The sign-in request asks for the `api` scope explicitly. Without it, Salesforce issues a token with no scope, and every API call refuses it with 401 INVALID_SESSION_ID (seen from 6 Oct 2026).
 - **Continue without signing in** keeps the website-style chat, where the customer shares an email.
 - `assets/chat.js` runs the chat full screen. It sends one request per message, without a referrer, to `https://orgfarm-e88355df2d-dev-ed.develop.my.site.com/aspireappvforcesite/services/apexrest/aspireApp/assist` (with the token when signed in) and keeps the conversation for 12 hours.
