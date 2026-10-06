@@ -1,4 +1,4 @@
-var CACHE = 'aspire-app-v7';
+var CACHE = 'aspire-app-v8';
 var SHELL = [
   './',
   'index.html',
@@ -7,6 +7,8 @@ var SHELL = [
   'assets/app.js',
   'assets/chat.css',
   'assets/chat.js',
+  'assets/recovery.css',
+  'assets/recovery.js',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/badge-96.png'
@@ -59,6 +61,7 @@ function parsePush(event) {
     status: d.status || raw.status || '',
     tab: d.tab || raw.tab || 'chat',
     say: d.say || raw.say || '',
+    ctx: d.ctx || raw.ctx || '',
     tag: d.tag || raw.tag || 'aspire-update'
   };
 }
@@ -85,12 +88,12 @@ self.addEventListener('push', function (event) {
 self.addEventListener('notificationclick', function (event) {
   var p = event.notification.data || {};
   event.notification.close();
-  var target = new URL('./?open=' + encodeURIComponent(p.tab || 'chat') + (p.say ? '&say=' + encodeURIComponent(p.say) : ''), self.registration.scope).href;
+  var target = new URL('./?open=' + encodeURIComponent(p.tab || 'chat') + (p.say ? '&say=' + encodeURIComponent(p.say) : '') + (p.ctx ? '&ctx=' + encodeURIComponent(p.ctx) : ''), self.registration.scope).href;
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (list) {
       for (var i = 0; i < list.length; i++) {
         if (list[i].url.indexOf(self.registration.scope) === 0 && 'focus' in list[i]) {
-          list[i].postMessage({ type: 'open', tab: p.tab || 'chat', say: p.say || '' });
+          list[i].postMessage({ type: 'open', tab: p.tab || 'chat', say: p.say || '', ctx: p.ctx || '' });
           return list[i].focus();
         }
       }

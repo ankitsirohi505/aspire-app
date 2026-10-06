@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.0.0';
+  var VERSION = '2.1.0';
   var KEYS = {
     updates: 'aspireApp.updates.v1',
     seen: 'aspireApp.updatesSeen.v1',
@@ -136,6 +136,7 @@
   var chatMounted = false;
   var tripFilter = 'upcoming';
   var lastHomeFetch = 0;
+  var recoveries = [];
 
   function $(id) { return document.getElementById(id); }
 
@@ -401,11 +402,13 @@
     renderAll();
     fetchHome(true);
     if (token()) loadServerUpdates();
+    loadRecoveries();
     refreshPush();
   }
 
   function setTab(name) {
-    var views = { home: els.home, trips: els.trips, chat: els.chatView, updates: els.updatesView, account: els.account };
+    var views = { home: els.home, trips: els.trips, chat: els.chatView, updates: els.updatesView, account: els.account, recovery: els.recoveryView };
+    if (name !== 'recovery' && current === 'recovery' && window.AspireRecovery) window.AspireRecovery.close();
     if (current === name && views[name]) views[name].scrollTop = 0;
     current = name;
     Object.keys(views).forEach(function (k) {
@@ -494,6 +497,43 @@
     return updates().filter(function (u) { return !u.read; }).length;
   }
 
+  function loadRecoveries() {
+    if (!token() || !window.AspireRecovery) {
+      recoveries = [];
+      return;
+    }
+    window.AspireRecovery.active().then(function (list) {
+      recoveries = list || [];
+      if (current === 'home') renderHome();
+    }).catch(function () { return null; });
+  }
+
+  function recoveryBanner() {
+    if (!token() || !recoveries.length) return '';
+    var r = recoveries[0];
+    var rebooked = !!r.newFlight && /Rebooked|Kept|Confirmed|Changed/.test(r.status || '');
+    var title = r.live ? 'You are chatting with our team' : (rebooked ? 'Rebooked on ' + (r.newAirline || '') + ' ' + r.newFlight : (r.type === 'Cancelled' ? (r.airline || '') + ' ' + r.flight + ' was cancelled' : (r.airline || '') + ' ' + r.flight + ' time changed'));
+    var sub = r.live ? 'Case ' + (r.caseNumber || '') + ' · tap to continue' : (rebooked ? (r.newDeparture || '') + (r.seats ? ' · seats ' + r.seats : '') + ' · tap to review' : 'We are finding your best new flight now');
+    return '<button class="trip-alert' + (rebooked ? ' good' : '') + '" type="button" data-action="recovery" data-id="' + esc(r.id) + '">' +
+      '<span class="ta-ico">' + (rebooked ? ICONS.check : ICONS.alert) + '</span>' +
+      '<span class="ta-text"><b>' + esc(title) + '</b><small>' + esc(sub) + '</small></span>' +
+      '<span class="ta-go">' + ICONS.arrow + '</span></button>';
+  }
+
+  function openRecovery(id) {
+    if (!id || !window.AspireRecovery) return;
+    if (!token()) {
+      try { sessionStorage.setItem('aspireApp.recovery.v1', id); } catch (e) { return signIn(); }
+      if (els.main.hidden) showMain('home');
+      toast('Please sign in to see your flight update.', 'Sign in', signIn);
+      return;
+    }
+    closeSheet();
+    if (els.main.hidden) showMain('home');
+    setTab('recovery');
+    window.AspireRecovery.open(id);
+  }
+
   function renderHome() {
     if (!els.home) return;
     var h = home();
@@ -509,6 +549,7 @@
       '<p>' + (token() ? 'Where would you like to go next?' : 'Your personal concierge, at any hour.') + '</p></div>' +
       '<button class="ask-pill" type="button" data-action="chat">' + icon('sparkle') + '<span>Ask your concierge anything</span><span class="go">' + icon('arrow') + '</span></button>' +
       '</header>';
+    html += recoveryBanner();
     html += memberCard(h, false);
     html += '<div class="quick">' +
       '<button type="button" data-action="plan"><span class="q-ico">' + ICONS.sparkle + '</span>Plan a trip</button>' +
@@ -956,6 +997,13 @@
     var p = new URLSearchParams(location.search);
     var open = p.get('open');
     var say = p.get('say');
+    var ctx = p.get('ctx');
+    if (open === 'recovery' && ctx) {
+      history.replaceState(null, '', location.pathname);
+      showMain('home');
+      openRecovery(ctx);
+      return true;
+    }
     if (!open && !say) return false;
     history.replaceState(null, '', location.pathname);
     showMain(open === 'updates' ? 'updates' : 'home');
@@ -972,6 +1020,11 @@
         addUpdate(m.notice);
         loadServerUpdates();
         fetchHome(true);
+        loadRecoveries();
+      }
+      if (m.type === 'open' && m.tab === 'recovery' && m.ctx) {
+        openRecovery(m.ctx);
+        return;
       }
       if (m.type === 'open') {
         if (els.main.hidden) showMain('home');
@@ -993,6 +1046,7 @@
     else if (a === 'signin') signIn();
     else if (a === 'signout') signOut();
     else if (a === 'trip') showTrip(el.getAttribute('data-id'));
+    else if (a === 'recovery') openRecovery(el.getAttribute('data-id'));
     else if (a === 'service') showService(el.getAttribute('data-id'));
     else if (a === 'article') showArticle(Number(el.getAttribute('data-i')));
     else if (a === 'idea') openChat({ say: 'Let\'s plan ' + el.getAttribute('data-title') });
@@ -1018,6 +1072,7 @@
     els.chatHost = $('chat-host');
     els.updatesView = $('view-updates');
     els.account = $('view-account');
+    els.recoveryView = $('view-recovery');
     els.status = $('status');
     els.updatesList = $('updates-list');
     els.updatesBadge = $('updates-badge');
@@ -1046,6 +1101,18 @@
       window.AspireChat.on('busy', function (b) { els.status.textContent = b ? 'Typing…' : 'Online · replies in seconds'; });
     }
 
+    if (window.AspireRecovery) {
+      window.AspireRecovery.configure({
+        api: api,
+        icons: ICONS,
+        onClose: function () { setTab('home'); loadRecoveries(); },
+        onChange: function (r) {
+          if (!r) return;
+          recoveries = recoveries.map(function (x) { return x.id === r.id ? Object.assign({}, x, r) : x; });
+        }
+      });
+    }
+
     fitHeight();
     if (window.visualViewport) window.visualViewport.addEventListener('resize', fitHeight);
     window.addEventListener('resize', fitHeight);
@@ -1070,6 +1137,7 @@
       if (document.visibilityState !== 'visible' || els.main.hidden) return;
       fetchHome(false);
       loadServerUpdates();
+      loadRecoveries();
       refreshPush();
       renderNotify();
     });
@@ -1080,6 +1148,14 @@
     var returned = consumeAuthReturn();
     if (returned) {
       showMain('home');
+      var pending = null;
+      try {
+        pending = sessionStorage.getItem('aspireApp.recovery.v1');
+        sessionStorage.removeItem('aspireApp.recovery.v1');
+      } catch (e) {
+        pending = null;
+      }
+      if (pending) openRecovery(pending);
       setTimeout(offerPush, 2500);
       return;
     }
