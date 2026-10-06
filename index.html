@@ -17,8 +17,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@300;400;600;700&family=Lato:wght@400;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="assets/chat.css?v=2">
-  <link rel="stylesheet" href="assets/app.css?v=2">
+  <link rel="stylesheet" href="assets/chat.css?v=3">
+  <link rel="stylesheet" href="assets/app.css?v=3">
 </head>
 <body>
   <div class="app" id="app">
@@ -35,7 +35,8 @@
         <li><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg></span><span><b>Your Aspire points</b>Earn on every trip and pay with points when you like.</span></li>
       </ul>
       <div class="spacer"></div>
-      <button class="btn btn-primary" id="start" type="button">Get started</button>
+      <button class="btn btn-primary" id="start" type="button">Sign in</button>
+      <button class="link-btn" id="guest" type="button">Continue without signing in</button>
       <button class="btn btn-ghost" id="welcome-install" type="button" hidden>Install the app</button>
       <div class="install-hint" id="welcome-hint" hidden></div>
       <p class="demo-note">Demo prototype. Not an official Aspire Lifestyles app.</p>
@@ -71,6 +72,8 @@
         <div class="view" id="view-account" hidden>
           <div class="page">
             <div class="profile" id="profile"></div>
+            <div class="stats" id="stats" hidden></div>
+            <button class="btn btn-primary" id="sign-in" type="button" hidden>Sign in</button>
             <button class="btn btn-line" id="sign-out" type="button" hidden>Sign out</button>
             <div class="card" id="install-card" style="margin-top:18px">
               <h3>Install Aspire on your phone</h3>
@@ -99,7 +102,7 @@
       </nav>
     </section>
   </div>
-  <script src="assets/chat.js?v=2" defer></script>
-  <script src="assets/app.js?v=2" defer></script>
+  <script src="assets/chat.js?v=3" defer></script>
+  <script src="assets/app.js?v=3" defer></script>
 </body>
 </html>

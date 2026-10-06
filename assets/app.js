@@ -1,8 +1,16 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.0.0';
-  var KEYS = { started: 'aspireApp.started.v1', updates: 'aspireApp.updates.v1' };
+  var VERSION = '1.1.0';
+  var KEYS = { started: 'aspireApp.started.v1', updates: 'aspireApp.updates.v1', me: 'aspireApp.me.v1' };
+  var AUTH = {
+    site: 'https://orgfarm-e88355df2d-dev-ed.develop.my.site.com/aspireapp',
+    api: 'https://orgfarm-e88355df2d-dev-ed.develop.my.site.com/aspireappvforcesite/services/apexrest',
+    logout: 'https://orgfarm-e88355df2d-dev-ed.develop.my.site.com/aspireappvforcesite/secur/logout.jsp',
+    clientId: '3MVG9XgkMlifdwVCcjmh1PMTUBG3831HP23RbBiE65U5ZxXaLiHAHLoLmN3Mh2I51ggnZWCQUCiW3Up66VcCZ',
+    key: 'aspireApp.auth.v1',
+    stateKey: 'aspireApp.authState.v1'
+  };
   var TAB_TITLES = { chat: 'Aspire Concierge', updates: 'Trip updates', account: 'Account' };
   var NOTICE_ICONS = {
     'Rebooked': '&#9992;', 'Rebooking proposal': '&#9888;', 'Hotel price drop': '&#9660;',
@@ -29,6 +37,10 @@
     try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { return; }
   }
 
+  function forget(key) {
+    try { localStorage.removeItem(key); } catch (e) { return; }
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -50,9 +62,96 @@
     return (sameDay ? 'Today' : d.toLocaleDateString([], { day: 'numeric', month: 'short' })) + ' · ' + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   }
 
+  function num(v) { return new Intl.NumberFormat('en-US').format(v || 0); }
+
   function fitHeight() {
     var h = window.visualViewport ? window.visualViewport.height : window.innerHeight;
     document.documentElement.style.setProperty('--app-h', Math.round(h) + 'px');
+  }
+
+  function session() { return read(AUTH.key, null); }
+
+  function token() {
+    var s = session();
+    return s && s.token ? s.token : null;
+  }
+
+  function nonce() {
+    var a = new Uint8Array(16);
+    (window.crypto || window.msCrypto).getRandomValues(a);
+    return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+  }
+
+  function appUrl() { return location.origin + location.pathname; }
+
+  function signIn() {
+    var n = nonce();
+    write(AUTH.stateKey, { nonce: n, ts: Date.now() });
+    location.assign(AUTH.site + '/services/oauth2/authorize?response_type=token' +
+      '&client_id=' + encodeURIComponent(AUTH.clientId) +
+      '&redirect_uri=' + encodeURIComponent(appUrl()) +
+      '&state=' + n);
+  }
+
+  function consumeAuthReturn() {
+    var h = location.hash || '';
+    if (h.indexOf('access_token=') === -1 && h.indexOf('error=') === -1) return false;
+    var p = new URLSearchParams(h.slice(1));
+    history.replaceState(null, '', location.pathname + location.search);
+    var saved = read(AUTH.stateKey, null);
+    forget(AUTH.stateKey);
+    if (p.get('error')) {
+      toast('Sign-in did not complete: ' + String(p.get('error_description') || p.get('error')).replace(/\+/g, ' '));
+      return false;
+    }
+    if (!saved || saved.nonce !== p.get('state') || Date.now() - saved.ts > 30 * 60 * 1000) {
+      toast('Sign-in could not be verified. Please try again.');
+      return false;
+    }
+    write(AUTH.key, { token: p.get('access_token'), issuedAt: Number(p.get('issued_at')) || Date.now(), communityUrl: p.get('sfdc_community_url') || '' });
+    forget(KEYS.me);
+    write(KEYS.updates, []);
+    if (window.AspireChat) window.AspireChat.clear();
+    return true;
+  }
+
+  function signOut() {
+    forget(AUTH.key);
+    forget(KEYS.me);
+    write(KEYS.updates, []);
+    write(KEYS.started, false);
+    if (window.AspireChat) window.AspireChat.clear();
+    location.assign(AUTH.logout);
+  }
+
+  function sessionEnded() {
+    forget(AUTH.key);
+    forget(KEYS.me);
+    renderAccount();
+    toast('Your session has ended. Please sign in again.', 'Sign in', signIn);
+  }
+
+  function loadMe() {
+    var t = token();
+    if (!t) return;
+    fetch(AUTH.api + '/aspireApp/me', {
+      method: 'GET',
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'no-store',
+      referrerPolicy: 'no-referrer',
+      headers: { Authorization: 'Bearer ' + t }
+    })
+      .then(function (r) {
+        if (r.status === 401) { sessionEnded(); return null; }
+        return r.ok ? r.json() : null;
+      })
+      .then(function (me) {
+        if (!me || !me.signedIn) return;
+        write(KEYS.me, me);
+        renderAccount();
+      })
+      .catch(function (e) { console.warn('Profile not loaded', e); });
   }
 
   function showMain(tab) {
@@ -67,6 +166,7 @@
       window.AspireChat.on('busy', function (b) { els.status.textContent = b ? 'Typing…' : 'Online'; });
     }
     setTab(tab || 'chat');
+    if (token()) loadMe();
   }
 
   function setTab(name) {
@@ -130,14 +230,33 @@
   }
 
   function renderAccount() {
+    var me = token() ? read(KEYS.me, null) : null;
     var who = window.AspireChat ? window.AspireChat.identity() : null;
-    if (who && who.firstName) {
-      els.profile.innerHTML = '<div class="avatar">' + esc(who.firstName.charAt(0).toUpperCase()) + '</div>' +
-        '<div><b>' + esc(who.firstName) + '</b><span>' + (who.isNewCustomer ? 'New Aspire member' : 'Aspire member') + ' · signed in through chat</span></div>';
+    if (token()) {
+      var first = (me && me.firstName) || (who && who.firstName) || '';
+      var full = me ? (me.firstName + ' ' + me.lastName).trim() : first;
+      els.profile.innerHTML = '<div class="avatar">' + esc((first || '?').charAt(0).toUpperCase()) + '</div>' +
+        '<div><b>' + esc(full || 'Signed in') + '</b><span>' + esc(me && me.email ? me.email : 'Signed in to Aspire') + '</span></div>';
+      els.stats.innerHTML = me ? (
+        '<div class="stat"><small>Tier</small><b>' + esc(me.tier || 'Member') + '</b></div>' +
+        '<div class="stat"><small>Aspire points</small><b>' + num(me.points) + '</b></div>' +
+        '<div class="stat"><small>Home airport</small><b>' + esc(me.homeAirport || '—') + '</b></div>') : '';
+      els.stats.hidden = !me;
       els.signOut.hidden = false;
+      els.signOut.textContent = 'Sign out';
+      els.signInBtn.hidden = true;
     } else {
-      els.profile.innerHTML = '<div class="avatar anon">&#9786;</div><div><b>Not signed in</b><span>Share your email with the concierge to sign in</span></div>';
-      els.signOut.hidden = true;
+      els.stats.hidden = true;
+      if (who && who.firstName) {
+        els.profile.innerHTML = '<div class="avatar">' + esc(who.firstName.charAt(0).toUpperCase()) + '</div>' +
+          '<div><b>' + esc(who.firstName) + '</b><span>Chatting as a guest</span></div>';
+        els.signOut.hidden = false;
+        els.signOut.textContent = 'End guest chat';
+      } else {
+        els.profile.innerHTML = '<div class="avatar anon">&#9786;</div><div><b>Not signed in</b><span>Sign in to see your trips, points and updates</span></div>';
+        els.signOut.hidden = true;
+      }
+      els.signInBtn.hidden = false;
     }
     els.installCard.hidden = isStandalone();
     els.installSteps.innerHTML = isIos()
@@ -187,6 +306,7 @@
     var say = p.get('say');
     if (!open && !say) return false;
     history.replaceState(null, '', location.pathname);
+    if (!token() && !read(KEYS.started, false)) return false;
     showMain(open === 'updates' ? 'updates' : 'chat');
     if (say && window.AspireChat && window.AspireChat.identity()) setTimeout(function () { window.AspireChat.send(say); }, 300);
     return true;
@@ -217,7 +337,9 @@
     els.updatesList = $('updates-list');
     els.updatesBadge = $('updates-badge');
     els.profile = $('profile');
+    els.stats = $('stats');
     els.signOut = $('sign-out');
+    els.signInBtn = $('sign-in');
     els.installCard = $('install-card');
     els.installSteps = $('install-steps');
     els.installBtn = $('install-btn');
@@ -227,11 +349,15 @@
     els.menu = $('menu');
     $('version').textContent = VERSION;
 
+    if (window.AspireChat) window.AspireChat.configure({ token: token, onUnauthorized: sessionEnded });
+
     fitHeight();
     if (window.visualViewport) window.visualViewport.addEventListener('resize', fitHeight);
     window.addEventListener('resize', fitHeight);
 
-    $('start').addEventListener('click', function () { showMain('chat'); setTimeout(function () { window.AspireChat && window.AspireChat.focus(); }, 250); });
+    $('start').addEventListener('click', signIn);
+    $('guest').addEventListener('click', function () { showMain('chat'); setTimeout(function () { window.AspireChat && window.AspireChat.focus(); }, 250); });
+    els.signInBtn.addEventListener('click', signIn);
     [].forEach.call(document.querySelectorAll('.tab'), function (t) {
       t.addEventListener('click', function () { setTab(t.getAttribute('data-tab')); });
     });
@@ -241,9 +367,16 @@
     $('ask-updates').addEventListener('click', function () {
       els.menu.hidden = true;
       if (window.AspireChat.identity()) window.AspireChat.send('Any updates on my trip?');
-      else toast('Share your email with the concierge first.');
+      else toast(token() ? 'One moment, the concierge is still getting ready.' : 'Sign in first, or share your email with the concierge.');
     });
-    els.signOut.addEventListener('click', function () { window.AspireChat.reset(); write(KEYS.updates, []); renderUpdates(); renderAccount(); setTab('chat'); });
+    els.signOut.addEventListener('click', function () {
+      if (token()) { signOut(); return; }
+      window.AspireChat.reset();
+      write(KEYS.updates, []);
+      renderUpdates();
+      renderAccount();
+      setTab('chat');
+    });
     els.updatesList.addEventListener('click', function (e) {
       if (e.target.closest('[data-open-chat]')) setTab('chat');
     });
@@ -251,7 +384,10 @@
     setupInstall();
     renderUpdates();
     registerWorker();
-    if (!handleLink() && (read(KEYS.started, false) || isStandalone())) showMain('chat');
+    var returned = consumeAuthReturn();
+    if (returned) { showMain('chat'); return; }
+    if (handleLink()) return;
+    if (token() || read(KEYS.started, false)) showMain('chat');
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

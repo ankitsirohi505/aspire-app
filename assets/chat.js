@@ -11,7 +11,8 @@
     slowNoticeMs: 8000,
     verySlowNoticeMs: 30000,
     storageKey: 'aspireApp.chat.v1',
-    keepForMs: 12 * 60 * 60 * 1000
+    keepForMs: 12 * 60 * 60 * 1000,
+    signedInOpener: 'Hi'
   };
 
   var ICONS = {
@@ -40,6 +41,16 @@
   var slowTimer = null, verySlowTimer = null;
   var els = {};
   var listeners = {};
+  var auth = { token: null, onUnauthorized: null };
+
+  function configure(opts) {
+    auth.token = opts && opts.token ? opts.token : null;
+    auth.onUnauthorized = opts && opts.onUnauthorized ? opts.onUnauthorized : null;
+  }
+
+  function currentToken() {
+    try { return auth.token ? auth.token() : null; } catch (e) { return null; }
+  }
 
   function freshState() {
     return { started: false, items: [], trip: {}, joinedAt: null };
@@ -160,8 +171,12 @@
     if (state.started) return;
     state.started = true;
     state.joinedAt = Date.now();
-    state.items.push({ kind: 'agent', texts: [CONFIG.welcome], cards: [], ts: Date.now() });
+    if (!currentToken()) state.items.push({ kind: 'agent', texts: [CONFIG.welcome], cards: [], ts: Date.now() });
     save();
+  }
+
+  function open() {
+    if (currentToken() && !state.items.length && !busy) send(CONFIG.signedInOpener, true);
   }
 
   function reset() {
@@ -173,6 +188,17 @@
     start();
     render();
     emit('identity', identity());
+    open();
+  }
+
+  function clear() {
+    busy = false;
+    slow = 0;
+    clearTimeout(slowTimer);
+    clearTimeout(verySlowTimer);
+    state = freshState();
+    try { localStorage.removeItem(CONFIG.storageKey); } catch (e) { state = freshState(); }
+    if (els.body) { start(); render(); }
   }
 
   function identity() {
@@ -195,8 +221,18 @@
     send(text);
   }
 
-  function send(text) {
-    push({ kind: 'user', text: text, ts: Date.now() });
+  function recentTurns() {
+    var turns = [];
+    state.items.forEach(function (it) {
+      if (it.kind === 'user') turns.push({ role: 'customer', text: it.text });
+      else if (it.kind === 'agent') (it.texts || []).forEach(function (t) { turns.push({ role: 'agent', text: t }); });
+    });
+    return turns.slice(-CONFIG.historyTurns);
+  }
+
+  function send(text, hidden) {
+    var turns = recentTurns();
+    if (!hidden) push({ kind: 'user', text: text, ts: Date.now() });
     busy = true;
     slow = 0;
     clearTimeout(slowTimer);
@@ -206,17 +242,14 @@
     render();
     emit('busy', true);
 
-    var history = [];
-    state.items.forEach(function (it) {
-      if (it.kind === 'user') history.push({ role: 'customer', text: it.text });
-      else if (it.kind === 'agent') (it.texts || []).forEach(function (t) { history.push({ role: 'agent', text: t }); });
-    });
-    history.pop();
     var body = JSON.stringify({
       message: text,
-      history: history.slice(-CONFIG.historyTurns),
+      history: turns,
       state: state.trip || {}
     });
+    var token = currentToken();
+    var headers = { 'Content-Type': 'text/plain;charset=UTF-8' };
+    if (token) headers.Authorization = 'Bearer ' + token;
     var sentFor = state;
     var before = JSON.stringify(identity());
 
@@ -229,12 +262,13 @@
         credentials: 'omit',
         cache: 'no-store',
         referrerPolicy: 'no-referrer',
-        headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+        headers: headers,
         body: body,
         signal: ctrl ? ctrl.signal : undefined
       })
         .then(function (r) {
           clearTimeout(timer);
+          if (r.status === 401) { var u = new Error('Session ended'); u.unauthorized = true; throw u; }
           if (!r.ok) throw new Error('HTTP ' + r.status);
           return r.json();
         }, function (err) {
@@ -243,7 +277,7 @@
         })
         .catch(function (err) {
           console.warn('Concierge request attempt ' + n + ' failed (' + (err && (err.name + ': ' + err.message)) + ')');
-          if (n < CONFIG.attempts) return attempt(n + 1);
+          if (n < CONFIG.attempts && !(err && err.unauthorized)) return attempt(n + 1);
           throw err;
         });
     }
@@ -269,6 +303,11 @@
       .catch(function (err) {
         console.error('Concierge request failed:', err);
         if (sentFor !== state) return;
+        if (err && err.unauthorized) {
+          state.items.push({ kind: 'error', texts: ['Your session has ended. Please sign in again.'], ts: Date.now() });
+          if (auth.onUnauthorized) setTimeout(auth.onUnauthorized, 0);
+          return;
+        }
         state.items.push({ kind: 'error', texts: ['I could not reach the concierge just now. Please check your connection and try again.'], ts: Date.now() });
       })
       .then(function () {
@@ -585,12 +624,15 @@
     build(container);
     start();
     render();
+    open();
   }
 
   window.AspireChat = {
     mount: mount,
+    configure: configure,
     on: on,
     reset: reset,
+    clear: clear,
     identity: identity,
     isBusy: function () { return busy; },
     send: function (text) { if (text && !busy && els.body) send(String(text)); },

@@ -186,3 +186,13 @@ button { font-family: inherit; }
   display: flex; gap: 10px; align-items: center;
 }
 .toast button { margin-left: auto; border: 0; background: var(--coral); color: #fff; border-radius: 10px; padding: 8px 12px; font-weight: 700; cursor: pointer; }
+
+.link-btn {
+  display: block; width: 100%; margin-top: 10px; padding: 12px; border: 0; background: none; cursor: pointer;
+  color: rgba(255,255,255,.78); font-size: 14px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px;
+}
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: -4px 0 18px; }
+.stat { background: var(--mist); border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; }
+.stat small { display: block; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.stat b { display: block; font-size: 16px; margin-top: 2px; }
+#sign-in { margin-bottom: 10px; }
