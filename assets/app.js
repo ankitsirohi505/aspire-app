@@ -1,10 +1,11 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.1.1';
+  var VERSION = '2.1.2';
   var KEYS = {
     updates: 'aspireApp.updates.v1',
     seen: 'aspireApp.updatesSeen.v1',
+    check: 'aspireApp.signInCheck.v1',
     home: 'aspireApp.home.v1'
   };
   var AUTH = {
@@ -323,6 +324,7 @@
       return false;
     }
     write(AUTH.key, { token: p.get('access_token'), issuedAt: Number(p.get('issued_at')) || Date.now(), communityUrl: p.get('sfdc_community_url') || '' });
+    noteCheck('sign-in', 'site ' + (p.get('sfdc_community_url') || 'none') + ' · instance ' + (p.get('instance_url') || 'none') + ' · scope ' + (p.get('scope') || 'none'), p.get('access_token'));
     forget(KEYS.home);
     write(KEYS.updates, []);
     if (window.AspireChat) window.AspireChat.clear();
@@ -342,10 +344,28 @@
   }
 
   function sessionEnded() {
+    var last = read(KEYS.check, [])[0];
     forget(AUTH.key);
     forget(KEYS.home);
     renderAll();
-    toast('Your session has ended. Please sign in again.', 'Sign in', signIn);
+    toast('Your session has ended. Please sign in again.' + (last ? ' (' + last.path + ': ' + last.detail + ')' : ''), 'Sign in', signIn);
+  }
+
+  function noteCheck(path, detail, t) {
+    var list = read(KEYS.check, []);
+    list.unshift({ at: Date.now(), path: String(path).split('?')[0], detail: String(detail).slice(0, 200), token: t ? String(t).slice(0, 3) + '… ' + String(t).length + ' chars' + (/\s/.test(t) ? ' with spaces' : '') : 'no token', version: VERSION });
+    write(KEYS.check, list.slice(0, 10));
+  }
+
+  function errorOf(body) {
+    try {
+      var d = JSON.parse(body);
+      if (Array.isArray(d) && d[0]) return (d[0].errorCode || '') + ' ' + (d[0].message || '');
+      if (d && d.error) return String(d.error);
+    } catch (e) {
+      return String(body || '').slice(0, 120);
+    }
+    return String(body || '').slice(0, 120);
   }
 
   function api(path, opts) {
@@ -362,9 +382,24 @@
       headers: headers,
       body: opts && opts.body
     }).then(function (r) {
-      if (r.status === 401 && t && !(opts && opts.quiet)) { sessionEnded(); throw new Error('please sign in again'); }
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
+      if (r.status === 401 && t) {
+        return r.text().then(function (body) {
+          noteCheck(path, '401 ' + errorOf(body), t);
+          if (!(opts && opts.quiet)) sessionEnded();
+          throw new Error('please sign in again');
+        });
+      }
+      if (!r.ok) {
+        if (t) noteCheck(path, 'HTTP ' + r.status, t);
+        throw new Error('HTTP ' + r.status);
+      }
+      return r.json().then(function (d) {
+        if (t) noteCheck(path, '200' + (d && typeof d.signedIn === 'boolean' ? ' signedIn ' + d.signedIn : ''), t);
+        return d;
+      });
+    }, function (e) {
+      if (t) noteCheck(path, 'network error ' + (e && e.message), t);
+      throw e;
     });
   }
 
@@ -674,6 +709,8 @@
       (isStandalone() ? '' : '<button class="row" type="button" data-action="install">' + icon('download') + '<span class="label">Install Aspire<small>Add the app to your home screen</small></span>' + icon('chev').replace('icon', 'icon chev') + '</button>') +
       '<button class="row" type="button" data-action="chat">' + icon('headset') + '<span class="label">Chat with your concierge<small>Available around the clock</small></span>' + icon('chev').replace('icon', 'icon chev') + '</button></div>';
     html += '<div class="list"><h3>About</h3><div class="row static">' + icon('info') + '<span class="label">Aspire Concierge app<small>Demo prototype. Not an official Aspire Lifestyles app.</small></span><span class="value">' + VERSION + '</span></div></div>';
+    var checks = read(KEYS.check, []);
+    if (checks.length) html += '<div class="list"><h3>Sign-in check</h3>' + checks.map(function (c) { return '<div class="row static">' + icon('info') + '<span class="label">' + esc(c.path) + '<small>' + esc(c.detail) + '<br>' + esc(c.token + ' · ' + c.version + ' · ' + new Date(c.at).toLocaleTimeString()) + '</small></span></div>'; }).join('') + '</div>';
     if (signed) html += '<button class="btn btn-line" type="button" data-action="signout">' + icon('logout') + 'Sign out</button>';
     else {
       html += '<button class="btn btn-primary" type="button" data-action="signin">Sign in</button>';
