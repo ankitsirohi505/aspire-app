@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.1.2';
+  var VERSION = '2.1.3';
   var KEYS = {
     updates: 'aspireApp.updates.v1',
     seen: 'aspireApp.updatesSeen.v1',
@@ -305,6 +305,7 @@
     location.assign(AUTH.site + '/services/oauth2/authorize?response_type=token' +
       '&client_id=' + encodeURIComponent(AUTH.clientId) +
       '&redirect_uri=' + encodeURIComponent(appUrl()) +
+      '&scope=api' +
       '&state=' + n);
   }
 
@@ -324,7 +325,8 @@
       return false;
     }
     write(AUTH.key, { token: p.get('access_token'), issuedAt: Number(p.get('issued_at')) || Date.now(), communityUrl: p.get('sfdc_community_url') || '' });
-    noteCheck('sign-in', 'site ' + (p.get('sfdc_community_url') || 'none') + ' · instance ' + (p.get('instance_url') || 'none') + ' · scope ' + (p.get('scope') || 'none'), p.get('access_token'));
+    noteCheck('sign-in', 'site ' + (p.get('sfdc_community_url') || 'none') + ' · instance ' + (p.get('instance_url') || 'none') + ' · scope ' + (p.get('scope') || 'none') + ' · fields ' + Array.from(p.keys()).filter(function (k) { return k !== 'access_token' && k !== 'signature'; }).join(', '), p.get('access_token'));
+    probeToken(p.get('access_token'), p.get('sfdc_community_url'), p.get('instance_url'));
     forget(KEYS.home);
     write(KEYS.updates, []);
     if (window.AspireChat) window.AspireChat.clear();
@@ -355,6 +357,15 @@
     var list = read(KEYS.check, []);
     list.unshift({ at: Date.now(), path: String(path).split('?')[0], detail: String(detail).slice(0, 200), token: t ? String(t).slice(0, 3) + '… ' + String(t).length + ' chars' + (/\s/.test(t) ? ' with spaces' : '') : 'no token', version: VERSION });
     write(KEYS.check, list.slice(0, 10));
+  }
+
+  function probeToken(t, community, instance) {
+    [['REST API via site', community], ['REST API via org domain', instance]].forEach(function (x) {
+      if (!t || !x[1] || x[1].indexOf('https://') !== 0) return;
+      fetch(x[1].replace(/\/$/, '') + '/services/data/v62.0/', { mode: 'cors', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', headers: { Authorization: 'Bearer ' + t } })
+        .then(function (r) { return r.text().then(function (b) { noteCheck(x[0], r.status + (r.ok ? ' OK' : ' ' + errorOf(b)), t); }); })
+        .catch(function (e) { noteCheck(x[0], 'network error ' + (e && e.message), t); });
+    });
   }
 
   function errorOf(body) {
