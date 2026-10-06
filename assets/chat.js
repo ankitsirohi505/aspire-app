@@ -22,7 +22,13 @@
     cloud: '<svg viewBox="0 0 44 30"><path fill="#00A1E0" d="M18.3 3.3A7.7 7.7 0 0 1 23.9 1a7.8 7.8 0 0 1 6.8 4 9.4 9.4 0 0 1 3.8-.8A9.5 9.5 0 0 1 44 13.7a9.5 9.5 0 0 1-11.3 9.3 6.9 6.9 0 0 1-9 2.8 7.9 7.9 0 0 1-14.6-.4 7.3 7.3 0 0 1-1.5.2A7.4 7.4 0 0 1 4 11.9a8.4 8.4 0 0 1 7.4-12.5 8.4 8.4 0 0 1 6.9 3.9z"/></svg>'
   };
 
-  var SHOWN_CARDS = ['ideas', 'packages', 'review', 'notice', 'flightOptions', 'booking', 'hotelOptions', 'hotelBooking', 'extras', 'tripSummary'];
+  var SHOWN_CARDS = ['menu', 'ideas', 'packages', 'review', 'notice', 'flightOptions', 'booking', 'hotelOptions', 'hotelBooking', 'extras', 'tripSummary'];
+  var MENU_ICONS = {
+    trip: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7z"/></svg>',
+    flights: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 20.5l2-6.5-5 .5-2 2.5H4l1.5-4L4 9h1.5l2 2.5 5 .5-2-6.5h2.2l4.3 6.5h3.5a1.5 1.5 0 0 1 0 3H17l-4.3 6.5z"/></svg>',
+    hotels: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 19V6"/><path d="M3 14h18v5"/><path d="M3 14V11a2 2 0 0 1 2-2h4v5"/><path d="M9 14V10h8a4 4 0 0 1 4 4"/></svg>',
+    services: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17h16"/><path d="M6 17a6 6 0 0 1 12 0"/><path d="M12 8V6"/><path d="M10 6h4"/><path d="M3 20h18"/></svg>'
+  };
 
   var AIRLINE_COLOURS = {
     'Emirates': '#c8102e', 'British Airways': '#075aaa', 'Virgin Atlantic': '#8f0d3c',
@@ -138,6 +144,8 @@
     els.send.addEventListener('click', submit);
     els.body.addEventListener('click', function (e) {
       if (busy) return;
+      var menu = e.target.closest('.acw-menu-pick');
+      if (menu) { if (!menu.disabled) send(menu.getAttribute('data-say')); return; }
       var idea = e.target.closest('.acw-idea-pick');
       if (idea) { send('Let\'s plan ' + idea.getAttribute('data-title')); return; }
       var pkg = e.target.closest('.acw-pkg-pick');
@@ -330,9 +338,10 @@
     if (state.started) {
       html += '<div class="acw-system">' + esc(CONFIG.agentName) + ' joined<br>' + esc(timeLabel(state.joinedAt || Date.now())) + '</div>';
     }
-    var lastFlightIdx = -1, bookedAfter = false, lastHotelIdx = -1, lastExtrasIdx = -1, lastPackagesIdx = -1, lastReviewIdx = -1, lastIdeasIdx = -1;
+    var lastFlightIdx = -1, bookedAfter = false, lastHotelIdx = -1, lastExtrasIdx = -1, lastPackagesIdx = -1, lastReviewIdx = -1, lastIdeasIdx = -1, lastMenuIdx = -1;
     state.items.forEach(function (it, i) {
       (it.cards || []).forEach(function (c) {
+        if (c.type === 'menu') lastMenuIdx = i;
         if (c.type === 'ideas') lastIdeasIdx = i;
         if (c.type === 'packages') { lastPackagesIdx = i; lastReviewIdx = -1; }
         if (c.type === 'review') lastReviewIdx = i;
@@ -362,7 +371,7 @@
         '<div class="acw-avatar">' + ICONS.agent + '</div><div class="acw-col">';
       (it.texts || []).forEach(function (t) { html += '<div class="acw-bubble">' + richText(t) + '</div>'; });
       cards.forEach(function (c) {
-        var interactive = (c.type === 'ideas' && i === lastIdeasIdx) || (c.type === 'packages' && i === lastPackagesIdx) || (c.type === 'review' && i === lastReviewIdx) ||
+        var interactive = (c.type === 'menu' && i === lastMenuIdx) || (c.type === 'ideas' && i === lastIdeasIdx) || (c.type === 'packages' && i === lastPackagesIdx) || (c.type === 'review' && i === lastReviewIdx) ||
           (c.type === 'flightOptions' && i === lastFlightIdx && !bookedAfter) ||
           (c.type === 'hotelOptions' && i === lastHotelIdx) || (c.type === 'extras' && i === lastExtrasIdx);
         html += '<div class="acw-card-inline">' + renderCard(c, interactive) + '</div>';
@@ -388,6 +397,7 @@
 
   function renderCard(card, interactive) {
     var d = card.data || {};
+    if (card.type === 'menu') return menuCard(d, interactive);
     if (card.type === 'ideas') return ideasCard(d, interactive);
     if (card.type === 'packages') return packagesCard(d, interactive);
     if (card.type === 'review') return reviewCard(d, interactive);
@@ -535,6 +545,18 @@
       return '<div class="acw-pk-line"><span class="acw-pk-ico">&#10022;</span><div><b>' + esc(s.name) + '</b><span>' +
         (s.withPoints ? num(s.pointsPrice) + ' Aspire points' : money(s.price)) + '</span></div></div>';
     }).join('');
+  }
+
+  function menuCard(d, interactive) {
+    var h = '<div class="acw-card acw-menu"><div class="acw-card-head">' +
+      '<div class="acw-fo-route">How can I help' + (d.firstName ? ', ' + esc(d.firstName) : '') + '?</div>' +
+      '<div class="acw-fo-sub">Choose one to get started</div></div><div class="acw-menu-grid">';
+    (d.options || []).forEach(function (o) {
+      h += '<button type="button" class="acw-menu-pick" data-say="' + esc(o.label) + '"' + (interactive ? '' : ' disabled') + '>' +
+        '<span class="acw-menu-ico">' + (MENU_ICONS[o.key] || '') + '</span>' +
+        '<b>' + esc(o.label) + '</b><small>' + esc(o.hint || '') + '</small></button>';
+    });
+    return h + '</div></div>';
   }
 
   function ideasCard(d, interactive) {

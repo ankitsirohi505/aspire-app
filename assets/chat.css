@@ -208,3 +208,11 @@
 .acw-embedded .acw-has-card .acw-col { max-width: calc(100% - 38px); }
 .acw-embedded .acw-avatar { width: 26px; height: 26px; }
 .acw-embedded .acw-bubble { font-size: 15px; }
+.acw-menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; }
+.acw-menu-pick { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 12px; border: 1px solid #ece8e8; border-radius: 12px; background: #fff; color: var(--acw-ink); font: inherit; cursor: pointer; }
+.acw-menu-pick b { font-size: 14px; }
+.acw-menu-pick small { font-size: 12px; color: var(--acw-muted); line-height: 1.35; }
+.acw-menu-pick:not(:disabled):active, .acw-menu-pick:not(:disabled):hover { border-color: var(--acw-accent); }
+.acw-menu-pick:disabled { cursor: default; opacity: .6; }
+.acw-menu-ico { width: 30px; height: 30px; border-radius: 50%; background: #fbeceb; color: var(--acw-accent); display: flex; align-items: center; justify-content: center; }
+.acw-menu-ico svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }

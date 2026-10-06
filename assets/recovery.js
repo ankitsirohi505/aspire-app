@@ -105,8 +105,7 @@
         '<div class="rv-free">' + icon('gift') + esc(c.price || 'No extra cost') + '</div>' +
         (why ? '<div class="rv-why"><h4>Why this flight</h4><ul>' + why + '</ul></div>' : '') +
         (c.hotel ? '<p class="rv-note">' + icon('bed') + esc(c.hotel) + '</p>' : '') +
-        (c.transfer ? '<p class="rv-note">' + icon('pin') + esc(c.transfer) + '</p>' : '') +
-        (c.source === 'Prompt Builder' ? '<div class="rv-ai">' + icon('sparkle') + 'Chosen by Aspire AI from your travel history</div>' : '') + '</div>';
+        (c.transfer ? '<p class="rv-note">' + icon('pin') + esc(c.transfer) + '</p>' : '') + '</div>';
     }
     if (t === 'options') {
       var opts = (c.options || []).map(function (o) {

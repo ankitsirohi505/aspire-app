@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.1.4';
+  var VERSION = '2.1.5';
   var KEYS = {
     updates: 'aspireApp.updates.v1',
     seen: 'aspireApp.updatesSeen.v1',
@@ -1099,7 +1099,7 @@
       window.AspireChat.configure({ token: token, onUnauthorized: sessionEnded });
       window.AspireChat.on('notice', addUpdate);
       window.AspireChat.on('identity', function () { renderHome(); renderAccount(); renderNotify(); });
-      window.AspireChat.on('busy', function (b) { els.status.textContent = b ? 'Typing…' : 'Online · replies in seconds'; });
+      window.AspireChat.on('busy', function (b) { els.status.textContent = b ? 'Typing…' : 'Online'; });
     }
 
     if (window.AspireRecovery) {

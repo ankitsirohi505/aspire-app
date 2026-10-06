@@ -85,8 +85,6 @@
 .rv-why .rv-i { color: #2e8b57; margin-top: 1px; }
 .rv-note { display: flex; gap: 8px; margin: 10px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.4; }
 .rv-note .rv-i { color: var(--coral); margin-top: 1px; }
-.rv-ai { display: flex; align-items: center; gap: 8px; margin-top: 14px; padding: 9px 12px; border-radius: 12px; background: linear-gradient(135deg, #14171d, #2f3443); color: #fff; font-size: 12px; font-weight: 700; }
-.rv-ai .rv-i { color: var(--gold); }
 
 .rv-options { display: grid; gap: 10px; }
 .rv-option { background: #fff; border-radius: 18px; box-shadow: var(--shadow-sm); padding: 14px; }
