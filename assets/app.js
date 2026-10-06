@@ -3,7 +3,6 @@
 
   var VERSION = '2.0.0';
   var KEYS = {
-    started: 'aspireApp.started.v1',
     updates: 'aspireApp.updates.v1',
     seen: 'aspireApp.updatesSeen.v1',
     home: 'aspireApp.home.v1'
@@ -267,6 +266,17 @@
 
   function session() { return read(AUTH.key, null); }
 
+  function guestSession() {
+    try { return sessionStorage.getItem('aspireApp.guest.v1') === '1'; } catch (e) { return false; }
+  }
+
+  function setGuestSession(on) {
+    try {
+      if (on) sessionStorage.setItem('aspireApp.guest.v1', '1');
+      else sessionStorage.removeItem('aspireApp.guest.v1');
+    } catch (e) { return; }
+  }
+
   function token() {
     var s = session();
     return s && s.token ? s.token : null;
@@ -325,7 +335,7 @@
     forget(AUTH.key);
     forget(KEYS.home);
     write(KEYS.updates, []);
-    write(KEYS.started, false);
+    setGuestSession(false);
     if (window.AspireChat) window.AspireChat.clear();
     location.assign(AUTH.logout);
   }
@@ -386,7 +396,7 @@
   function showMain(tab) {
     els.welcome.hidden = true;
     els.main.hidden = false;
-    write(KEYS.started, true);
+    if (!token()) setGuestSession(true);
     setTab(tab || 'home');
     renderAll();
     fetchHome(true);
@@ -948,7 +958,6 @@
     var say = p.get('say');
     if (!open && !say) return false;
     history.replaceState(null, '', location.pathname);
-    if (!token() && !read(KEYS.started, false)) return false;
     showMain(open === 'updates' ? 'updates' : 'home');
     if (open === 'chat' || say) openChat(say ? { say: say } : null);
     return true;
@@ -1075,7 +1084,7 @@
       return;
     }
     if (handleLink()) return;
-    if (token() || read(KEYS.started, false)) showMain('home');
+    if (token() || guestSession()) showMain('home');
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
