@@ -1,10 +1,11 @@
 (function () {
   'use strict';
 
-  var VERSION = '2.1.5';
+  var VERSION = '2.1.6';
   var KEYS = {
     updates: 'aspireApp.updates.v1',
     seen: 'aspireApp.updatesSeen.v1',
+    check: 'aspireApp.signInCheck.v1',
     home: 'aspireApp.home.v1'
   };
   var AUTH = {
@@ -323,7 +324,9 @@
       toast('Sign-in could not be verified. Please try again.');
       return false;
     }
-    write(AUTH.key, { token: p.get('access_token'), issuedAt: Number(p.get('issued_at')) || Date.now(), communityUrl: p.get('sfdc_community_url') || '' });
+    write(AUTH.key, { token: p.get('access_token'), issuedAt: Number(p.get('issued_at')) || Date.now(), communityUrl: p.get('sfdc_community_url') || '', signedInAt: Date.now() });
+    noteCheck('sign-in', 'scope ' + (p.get('scope') || 'none') + ' · site ' + (p.get('sfdc_community_url') || 'none') + ' · issued ' + (p.get('issued_at') ? Math.round((Date.now() - Number(p.get('issued_at'))) / 1000) + 's ago' : 'unknown') + ' · fields ' + Array.from(p.keys()).filter(function (k) { return k !== 'access_token' && k !== 'signature'; }).join(', '), p.get('access_token'));
+    probeToken(p.get('access_token'), p.get('sfdc_community_url'), p.get('instance_url'));
     forget(KEYS.home);
     write(KEYS.updates, []);
     if (window.AspireChat) window.AspireChat.clear();
@@ -343,14 +346,46 @@
   }
 
   function sessionEnded() {
+    var last = read(KEYS.check, [])[0];
     forget(AUTH.key);
     forget(KEYS.home);
     renderAll();
-    toast('Your session has ended. Please sign in again.', 'Sign in', signIn);
+    toast('Your session has ended. Please sign in again.' + (last ? ' (' + last.path + ': ' + last.detail + ')' : ''), 'Sign in', signIn);
   }
 
-  function api(path, opts) {
+  function noteCheck(path, detail, t) {
+    var list = read(KEYS.check, []);
+    list.unshift({ at: Date.now(), path: String(path).split('?')[0], detail: String(detail).slice(0, 220), token: t ? String(t).slice(0, 3) + '… ' + String(t).length + ' chars' : 'no token', version: VERSION });
+    write(KEYS.check, list.slice(0, 16));
+  }
+
+  function errorOf(body) {
+    try {
+      var d = JSON.parse(body);
+      if (Array.isArray(d) && d[0]) return (d[0].errorCode || '') + ' ' + (d[0].message || '');
+      if (d && d.error) return String(d.error);
+    } catch (e) {
+      return String(body || '').slice(0, 120);
+    }
+    return String(body || '').slice(0, 120);
+  }
+
+  function probeToken(t, community, instance) {
+    [0, 5000, 15000].forEach(function (wait) {
+      setTimeout(function () {
+        [['REST API via site', community], ['REST API via org domain', instance]].forEach(function (x) {
+          if (!t || !x[1] || x[1].indexOf('https://') !== 0) return;
+          fetch(x[1].replace(/\/$/, '') + '/services/data/v62.0/', { mode: 'cors', credentials: 'omit', cache: 'no-store', referrerPolicy: 'no-referrer', headers: { Authorization: 'Bearer ' + t } })
+            .then(function (r) { return r.text().then(function (b) { noteCheck(x[0] + ' at ' + (wait / 1000) + 's', r.status + (r.ok ? ' OK' : ' ' + errorOf(b)), t); }); })
+            .catch(function (e) { noteCheck(x[0] + ' at ' + (wait / 1000) + 's', 'network error ' + (e && e.message), t); });
+        });
+      }, wait);
+    });
+  }
+
+  function api(path, opts, attempt) {
     var t = token();
+    var n = attempt || 0;
     var headers = (opts && opts.headers) || {};
     if (t) headers.Authorization = 'Bearer ' + t;
     return fetch(AUTH.api + path, {
@@ -363,9 +398,29 @@
       headers: headers,
       body: opts && opts.body
     }).then(function (r) {
-      if (r.status === 401 && t) { sessionEnded(); throw new Error('please sign in again'); }
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
+      if (r.status === 401 && t) {
+        return r.text().then(function (body) {
+          noteCheck(path, '401 ' + errorOf(body) + (n ? ' (retry ' + n + ')' : ''), t);
+          var s = session();
+          var fresh = s && s.signedInAt && Date.now() - s.signedInAt < 30000;
+          if (fresh && n < 3 && token() === t) {
+            return new Promise(function (done) { setTimeout(done, 1500 * (n + 1)); }).then(function () { return api(path, opts, n + 1); });
+          }
+          if (token() === t) sessionEnded();
+          throw new Error('please sign in again');
+        });
+      }
+      if (!r.ok) {
+        if (t) noteCheck(path, 'HTTP ' + r.status + (n ? ' (retry ' + n + ')' : ''), t);
+        throw new Error('HTTP ' + r.status);
+      }
+      return r.json().then(function (d) {
+        if (t) noteCheck(path, '200' + (d && typeof d.signedIn === 'boolean' ? ' signedIn ' + d.signedIn : '') + (n ? ' after retry ' + n : ''), t);
+        return d;
+      });
+    }, function (e) {
+      if (t) noteCheck(path, 'network error ' + (e && e.message), t);
+      throw e;
     });
   }
 
@@ -675,6 +730,8 @@
       (isStandalone() ? '' : '<button class="row" type="button" data-action="install">' + icon('download') + '<span class="label">Install Aspire<small>Add the app to your home screen</small></span>' + icon('chev').replace('icon', 'icon chev') + '</button>') +
       '<button class="row" type="button" data-action="chat">' + icon('headset') + '<span class="label">Chat with your concierge<small>Available around the clock</small></span>' + icon('chev').replace('icon', 'icon chev') + '</button></div>';
     html += '<div class="list"><h3>About</h3><div class="row static">' + icon('info') + '<span class="label">Aspire Concierge app<small>Demo prototype. Not an official Aspire Lifestyles app.</small></span><span class="value">' + VERSION + '</span></div></div>';
+    var checks = read(KEYS.check, []);
+    if (checks.length) html += '<div class="list"><h3>Sign-in check</h3>' + checks.map(function (c) { return '<div class="row static">' + icon('info') + '<span class="label">' + esc(c.path) + '<small>' + esc(c.detail) + '<br>' + esc(c.token + ' · ' + c.version + ' · ' + new Date(c.at).toLocaleTimeString()) + '</small></span></div>'; }).join('') + '</div>';
     if (signed) html += '<button class="btn btn-line" type="button" data-action="signout">' + icon('logout') + 'Sign out</button>';
     else {
       html += '<button class="btn btn-primary" type="button" data-action="signin">Sign in</button>';
