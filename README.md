@@ -36,6 +36,9 @@ The Salesforce side lives in `aspire-app-salesforce` (SFDX project). Its `websit
 - Trip updates the concierge shows in chat (rebookings, delays, price drops, check-in) are also listed in the Updates tab.
 - `sw.js` makes the app installable, works offline for the shell, and already handles push notifications and taps on them.
 
-## Next
+## Push notifications
 
-Push notifications through Firebase Cloud Messaging, sent by Salesforce when the concierge acts on a trip. Setup steps: `aspire-app-salesforce/push/FIREBASE_SETUP.md`.
+- The app uses Firebase Cloud Messaging (project `aspire-app-demo`, free Spark plan). **Turn on notifications** (Updates tab, or the offer after sign-in) asks for permission, gets a Firebase token and registers the phone with Salesforce (`/aspireApp/device`).
+- Salesforce sends a push whenever the app's copy of the concierge autopilot acts on a trip (rebooking, delay, price drop, check-in). Tapping it opens the chat and asks for the update.
+- Trigger events from Salesforce: App Launcher, **Aspire App Console**, **Aspire App Demo** tab. Pick the customer and trip, then use **Send a test notification**, **Simulate cancellation**, **Simulate delay** or **Run price watch**. The website's own buttons don't send pushes.
+- iPhone needs iOS 16.4 or later and the app added to the Home Screen.
